@@ -126,12 +126,17 @@ try {
 const actual = dataSource.properties ?? {};
 let schemaProblems = 0;
 
+// Notion's own tooling calls a rich_text property "text"; the public API calls
+// it "rich_text". Same property, two names — do not report that as a mismatch.
+const ALIASES = { rich_text: ['rich_text', 'text'] };
+const accepts = (expected) => ALIASES[expected] ?? [expected];
+
 for (const [name, expectedType] of Object.entries(EXPECTED)) {
   const found = actual[name];
   if (!found) {
     fail(`Missing property "${name}" (expected type ${expectedType}).`);
     schemaProblems += 1;
-  } else if (found.type !== expectedType) {
+  } else if (!accepts(expectedType).includes(found.type)) {
     fail(`Property "${name}" is type "${found.type}", the app expects "${expectedType}".`);
     schemaProblems += 1;
   }

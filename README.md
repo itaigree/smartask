@@ -92,6 +92,16 @@ Put that id in `.env.local`:
 NOTION_DATABASE_ID=…
 ```
 
+**If the database already exists** — someone made it for you, or you made it by
+hand — skip this step and the `NOTION_PARENT_PAGE_ID` line entirely. Just open
+the database in Notion, **••• → Connections** and add your integration, then put
+its id in `NOTION_DATABASE_ID`. The id is the 32-character hex string in the
+database's URL. Run `npm run check:notion` to confirm the schema matches.
+
+> The Connections step is per-integration, and it is not optional. A database
+> created through a different Notion connection (the Claude connector, say, or a
+> colleague's account) is invisible to *your* integration until you add it here.
+
 ### 5. Verify the connection
 
 ```bash
