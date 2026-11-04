@@ -92,7 +92,17 @@ Put that id in `.env.local`:
 NOTION_DATABASE_ID=…
 ```
 
-### 5. Run
+### 5. Verify the connection
+
+```bash
+npm run check:notion
+```
+
+This is read-only — it changes nothing in your workspace. It walks the chain one
+link at a time (token → database → schema → an actual read) and tells you which
+link is broken and how to fix it, instead of leaving you to guess from a 500.
+
+### 6. Run
 
 ```bash
 npm run dev          # http://localhost:3000
@@ -116,10 +126,12 @@ The token is only ever read on the server, so it never reaches the browser.
 ## Development
 
 ```bash
-npm run dev     # dev server
-npm test        # 46 unit tests, no network needed
-npm run lint    # tsc --noEmit
-npm run build   # production build
+npm run dev           # dev server
+npm test              # 46 unit tests, no network needed
+npm run lint          # tsc --noEmit
+npm run build         # production build
+npm run check:notion  # diagnose the Notion connection (read-only)
+npm run setup:notion  # create the tasks database (run once)
 ```
 
 ### How it fits together
@@ -152,6 +164,23 @@ tomorrow: the browser sends its own timestamp when you capture a task.
 Claude-backed implementation means writing one file and returning it from
 `getCategorizer()` when `ANTHROPIC_API_KEY` is set. Nothing else imports the
 rules directly. See Phase 8 in `PLAN.md`.
+
+## Troubleshooting
+
+Run `npm run check:notion` first — it names the broken link. The failures worth
+knowing about:
+
+| What you see | What it means |
+|---|---|
+| `Notion rejected the token` | `NOTION_TOKEN` is wrong or was regenerated. Copy the Internal Integration Secret again, in full. |
+| `Notion cannot find that page or database` | Almost always the missing **Connections** step, not a wrong id. Notion reports anything an integration was never given access to as *not found*, never as *forbidden* — so "not found" usually means "not shared". |
+| `Could not reach api.notion.com` | A network problem, not an auth one: VPN, proxy, firewall, or a sandbox with a host allowlist. |
+| `Missing property "…"` | The database schema drifted from what the app expects — usually a property renamed by hand in Notion. Rename it back, or create a fresh database with `npm run setup:notion`. |
+| `Notion is rate limiting` | Roughly 3 requests/second. Wait and retry. |
+
+A thing worth internalising: **the token says *who* the app is, and the
+Connections step says *what it may see*.** They are separate, and a valid token
+with no page access looks exactly like a wrong id.
 
 ## Notes and limits
 

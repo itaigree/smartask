@@ -8,17 +8,12 @@
  *
  * Safe to re-run: it creates a new database each time, it never edits one.
  */
-import { Client } from '@notionhq/client';
-import { readFileSync, existsSync } from 'node:fs';
+// The Notion SDK is CommonJS, so Node's ESM loader cannot name-import from it.
+import notionSdk from '@notionhq/client';
+const { Client } = notionSdk;
+import { loadEnv, normalizeId, describeFailure } from './lib/env.mjs';
 
-// Minimal .env loader so the script works without extra dependencies.
-for (const file of ['.env.local', '.env']) {
-  if (!existsSync(file)) continue;
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
-  }
-}
+loadEnv();
 
 const CATEGORIES = ['Work', 'Personal', 'Errands', 'Health', 'Finance', 'Learning', 'Home', 'Inbox'];
 const PRIORITIES = ['Urgent', 'High', 'Normal', 'Low'];
@@ -32,14 +27,6 @@ const COLORS = {
 };
 
 const options = (names) => names.map((name) => ({ name, color: COLORS[name] ?? 'default' }));
-
-/** Accepts a bare id or any Notion URL containing one. */
-function normalizeId(raw) {
-  const hex = String(raw ?? '').replace(/-/g, '').match(/[0-9a-f]{32}/i);
-  if (!hex) return null;
-  const s = hex[0];
-  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
-}
 
 function fail(message) {
   console.error(`\n✗ ${message}\n`);
@@ -84,17 +71,8 @@ try {
     },
   });
 } catch (error) {
-  const code = error?.code ?? '';
-  if (code === 'unauthorized') {
-    fail('Notion rejected the token. Check NOTION_TOKEN is the Internal Integration Secret.');
-  }
-  if (code === 'object_not_found') {
-    fail(
-      'Notion cannot see that parent page.\n' +
-      '  Open the page, click ••• → Connections → add your integration, then re-run.',
-    );
-  }
-  fail(`Notion error (${code || 'unknown'}): ${error?.message ?? error}`);
+  const { summary, advice } = describeFailure(error);
+  fail([summary, ...advice.map((line) => `  ${line}`)].join('\n'));
 }
 
 console.log('\n✓ Database created.\n');
