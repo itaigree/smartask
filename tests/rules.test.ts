@@ -27,12 +27,19 @@ test('nothing recognisable falls through to Inbox', () => {
   assert.equal(signal.confidence, 0);
 });
 
-test('an explicit project or tag names the category outright', () => {
-  assert.equal(cat('zzz qqq', { project: 'work' }), 'Work');
+test('a tag that names a category wins outright', () => {
   assert.equal(cat('zzz qqq', { tags: ['health'] }), 'Health');
-  // ...and overrides the keywords.
-  assert.equal(cat('buy groceries', { project: 'Work' }), 'Work');
-  assert.equal(categorizeByRules({ title: 'x', project: 'work' }).confidence, 1);
+  assert.equal(cat('buy groceries', { tags: ['Work'] }), 'Work', 'it beats the keywords');
+  assert.equal(categorizeByRules({ title: 'x', tags: ['work'] }).confidence, 1);
+});
+
+test('a project that names a category is only a fallback', () => {
+  // Nothing else to go on: the project decides.
+  assert.equal(cat('zzz qqq', { project: 'work' }), 'Work');
+  // But real evidence in the text beats it — "#home" here is the household
+  // project, and paying a bill is still Finance.
+  assert.equal(cat('pay the electricity bill', { project: 'home' }), 'Finance');
+  assert.equal(categorizeByRules({ title: 'zzz', project: 'work' }).confidence, 0.6);
 });
 
 test('multi-word phrases outweigh single words', () => {

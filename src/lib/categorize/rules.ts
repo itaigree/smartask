@@ -82,15 +82,22 @@ export interface RuleInput {
 
 /**
  * Score every category against the text and return the winner.
- * An explicit `#work` project or `@finance` tag short-circuits the scoring.
+ *
+ * Two tiers of explicit naming, because `#` and `@` mean different things:
+ *
+ * - A **tag** that names a category wins outright. `@work` is a label; using a
+ *   category name as one is a deliberate statement about where the task belongs.
+ * - A **project** that names a category is only a fallback. `#home` on "pay the
+ *   electricity bill" means the household project, not the Home category — the
+ *   keywords in the text are the better evidence, so they win.
  */
 export function categorizeByRules(input: RuleInput): CategorySignal {
-  const explicit =
-    BY_NAME.get((input.project ?? '').toLowerCase()) ??
-    input.tags?.map((t) => BY_NAME.get(t.toLowerCase())).find(Boolean);
+  const taggedCategory = input.tags
+    ?.map((tag) => BY_NAME.get(tag.toLowerCase()))
+    .find((category): category is Category => Boolean(category));
 
-  if (explicit) {
-    return { category: explicit, confidence: 1, reason: 'named explicitly' };
+  if (taggedCategory) {
+    return { category: taggedCategory, confidence: 1, reason: 'named by a tag' };
   }
 
   const haystack = [input.title, input.note ?? '', ...(input.tags ?? [])]
@@ -112,6 +119,12 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
   }
 
   if (!best) {
+    // Nothing in the text to go on: fall back to the project name, if it
+    // happens to name a category, before giving up to Inbox.
+    const projectCategory = BY_NAME.get((input.project ?? '').toLowerCase());
+    if (projectCategory) {
+      return { category: projectCategory, confidence: 0.6, reason: 'named by the project' };
+    }
     return { category: 'Inbox', confidence: 0, reason: 'no keyword matched' };
   }
 

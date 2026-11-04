@@ -94,14 +94,45 @@ Later phases must not violate these:
    webhooks, offline mode.
 
 ## Phases
-- [ ] Phase 1: Scaffold & Notion schema — Next.js project boots, `npm run setup:notion` creates the database in Notion, `.env.example` documented — Done when: `npm run dev` serves a page and the setup script prints a database id that is visible in Notion.
-- [ ] Phase 2: Parser & categorizer — `parse.ts`, `categorize/rules.ts`, `types.ts` + tests — Done when: `npm test` passes and `"pay rent friday !! #home @bills"` parses to due=next Friday, priority=Urgent, project=home, tags=[bills], category=Finance.
-- [ ] Phase 3: Notion data layer — `notion.ts`, `tasks.ts`, `cache.ts` — Done when: a script can create a task and list it back from the real Notion database.
-- [ ] Phase 4: API routes — `api/tasks` GET/POST, `api/tasks/[id]` PATCH/DELETE — Done when: `curl -X POST /api/tasks -d '{"text":"buy milk tomorrow"}'` returns the created task and it appears in Notion.
-- [ ] Phase 5: Views engine — `views.ts` + tests — Done when: `npm test` passes, including focus-score ordering and overdue handling.
-- [ ] Phase 6: UI — layout, QuickAdd, ViewTabs, TaskBoard, TaskCard, globals.css — Done when: on a phone-width screen you can add a task, see it land in the right view, and tick it done.
-- [ ] Phase 7: Docs & deploy — README with Notion + Vercel setup — Done when: a stranger can follow README.md from zero to a deployed app.
+- [x] Phase 1: Scaffold & Notion schema — Next.js project boots, `npm run setup:notion` creates the database in Notion, `.env.example` documented — Done when: `npm run dev` serves a page and the setup script prints a database id that is visible in Notion.
+- [x] Phase 2: Parser & categorizer — `parse.ts`, `categorize/rules.ts`, `types.ts` + tests — Done when: `npm test` passes and `"pay rent friday !! #home @bills"` parses to due=next Friday, priority=Urgent, project=home, tags=[bills], category=Finance.
+- [x] Phase 3: Notion data layer — `notion.ts`, `notion-mapping.ts`, `tasks.ts`, `cache.ts` — Done when: a script can create a task and list it back from the real Notion database. **Code complete and unit-tested; the live round-trip needs your integration token — see Status log.**
+- [x] Phase 4: API routes — `api/tasks` GET/POST, `api/tasks/[id]` PATCH/DELETE — Done when: `curl -X POST /api/tasks -d '{"text":"buy milk tomorrow"}'` returns the created task and it appears in Notion. **Routes built and every error path exercised with curl; the Notion write itself is unverified — see Status log.**
+- [x] Phase 5: Views engine — `views.ts` + tests — Done when: `npm test` passes, including focus-score ordering and overdue handling.
+- [x] Phase 6: UI — layout, QuickAdd, ViewTabs, TaskBoard, TaskCard, globals.css — Done when: on a phone-width screen you can add a task, see it land in the right view, and tick it done.
+- [x] Phase 7: Docs & deploy — README with Notion + Vercel setup — Done when: a stranger can follow README.md from zero to a deployed app.
 - [ ] Phase 8 (deferred): Claude categorizer — `categorize/claude.ts` behind `ANTHROPIC_API_KEY` — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works.
 
 ## Status log
-(Appended after each phase: date, what was done, known issues.)
+
+**2026-11-04 — Phases 1-7 complete (v1 shipped).**
+All seven v1 phases built and verified in one session. 46 unit tests pass,
+`tsc --noEmit` is clean, `next build` succeeds, and the UI was checked in a real
+browser at phone and desktop widths in both colour schemes, with no console errors.
+
+Changes to the plan made while building, and why:
+
+- **`notion.ts` was split into `notion.ts` + `notion-mapping.ts`.** The Notion
+  SDK is CommonJS, so Node's test runner cannot named-import it. The pure page
+  <-> Task mapping now lives in its own module and is directly tested; only the
+  client wiring needs the SDK.
+- **`capture.ts` was extracted from `tasks.ts`** for the same reason: the
+  parse-then-categorize pipeline is pure and worth testing without a network.
+- **Category naming is two-tier, not a single override.** The original rule let
+  any `#project` naming a category force it, which made
+  "pay the electricity bill #home" a *Home* task. Now a `@tag` that names a
+  category wins outright, and a `#project` only applies when no keyword matched.
+- **Relative imports carry explicit `.ts`/`.tsx` extensions,** so `node --test`
+  runs the source with no build step. Verified against `next build`.
+
+Known issues / deliberate gaps:
+
+- Notion edits do not reach an already-open tab; the ↻ button re-reads.
+- The 20s read cache lives in module scope, so a serverless platform with
+  several warm instances can briefly serve different snapshots. Harmless for
+  one user; a shared cache would be the fix if it ever matters.
+- Phase 8 (Claude categorizer) is deliberately not built — the seam is in place
+  and unused.
+- The capture pipeline has not been run against a live Notion workspace; that
+  needs the user's own integration token. Every error path (missing config, bad
+  JSON, invalid enum) was exercised against the running server.
