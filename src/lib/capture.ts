@@ -1,4 +1,4 @@
-import { getCategorizer } from './categorize/index.ts';
+import { getCategorizer, type Categorizer } from './categorize/index.ts';
 import { parseTask } from './parse.ts';
 import type { NewTask } from './types.ts';
 
@@ -27,13 +27,18 @@ export function validateText(text: string): string {
 }
 
 /**
- * Parse the structure out of the text, then ask the current categorizer where
- * it belongs. Swapping in a Claude categorizer changes nothing here.
+ * Parse the structure out of the text, then ask a categorizer where it belongs.
+ * The categorizer is injected, so keyword rules and Gemini are interchangeable
+ * and neither is baked into this pipeline.
  */
-export async function draftFromText(text: string, now: Date = new Date()): Promise<NewTask> {
+export async function draftFromText(
+  text: string,
+  now: Date = new Date(),
+  categorizer: Categorizer = getCategorizer(),
+): Promise<NewTask> {
   const parsed = parseTask(validateText(text), now);
 
-  const { category } = await getCategorizer().categorize({
+  const { category } = await categorizer.categorize({
     title: parsed.title,
     note: parsed.note,
     project: parsed.project,

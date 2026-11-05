@@ -19,11 +19,15 @@ import ViewTabs from './ViewTabs.tsx';
 export default function TaskBoard({
   repo,
   config,
+  aiEnabled,
   onDisconnect,
+  onOpenAi,
 }: {
   repo: TaskRepository;
   config: NotionConfig;
+  aiEnabled: boolean;
   onDisconnect: () => void;
+  onOpenAi: () => void;
 }) {
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [view, setView] = useState<ViewId>('focus');
@@ -137,6 +141,15 @@ export default function TaskBoard({
             {counts && <span>{counts.open} open</span>}
             <button
               type="button"
+              className={`icon-button${aiEnabled ? ' on' : ''}`}
+              onClick={onOpenAi}
+              title={aiEnabled ? 'Gemini is classifying tasks' : 'Turn on AI classification'}
+              aria-label="AI classification settings"
+            >
+              ✦
+            </button>
+            <button
+              type="button"
               className="icon-button"
               onClick={refresh}
               disabled={refreshing}
@@ -165,7 +178,7 @@ export default function TaskBoard({
         </div>
       </header>
 
-      <QuickAdd onCreate={create} busy={creating} />
+      <QuickAdd onCreate={create} busy={creating} aiEnabled={aiEnabled} />
 
       {error && (
         <div className="banner" role="alert">

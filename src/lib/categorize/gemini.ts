@@ -1,0 +1,283 @@
+import { CATEGORIES, isCategory, type Category } from '../types.ts';
+import type { CategorySignal, Categorizer, RuleInput } from './index.ts';
+
+/**
+ * Classification by Gemini, called straight from the browser.
+ *
+ * `generativelanguage.googleapis.com` sends CORS headers that echo the calling
+ * origin and allow the `x-goog-api-key` header, so no server is needed. The key
+ * goes in that header rather than a `key=` query parameter: keys in URLs leak
+ * into history, logs and `Referer`.
+ *
+ * Nothing here is allowed to break capture. Every failure path falls back to
+ * the keyword rules, because a filed task in the wrong category beats a task
+ * that never got saved.
+ */
+
+const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta';
+
+export interface GeminiSettings {
+  apiKey: string;
+  model: string;
+}
+
+/** What each category means, so the model files tasks the way the app's views expect. */
+const CATEGORY_GUIDE: Record<Category, string> = {
+  Work: 'paid work, clients, colleagues, meetings, deadlines, work projects',
+  Personal: 'friends and family, social plans, gifts, travel, personal admin',
+  Errands: 'short trips and pickups: shops, post, deliveries, laundry, fuel',
+  Health: 'doctors, dentists, medication, fitness, mental health, appointments',
+  Finance: 'money: bills, rent, tax, banking, insurance, invoices, budgeting',
+  Learning: 'studying, courses, reading, research, exams, practising a skill',
+  Home: 'the home itself: repairs, cleaning, furniture, garden, utilities setup',
+  Inbox: 'only when the task is too vague or ambiguous to place anywhere else',
+};
+
+export function buildPrompt(input: RuleInput): string {
+  const lines = [
+    'Classify this personal task into exactly one category.',
+    '',
+    'Categories:',
+    ...CATEGORIES.map((c) => `- ${c}: ${CATEGORY_GUIDE[c]}`),
+    '',
+    `Task: ${JSON.stringify(input.title)}`,
+  ];
+
+  if (input.note) lines.push(`Note: ${JSON.stringify(input.note)}`);
+  if (input.project) lines.push(`Project: ${JSON.stringify(input.project)}`);
+  if (input.tags?.length) lines.push(`Tags: ${input.tags.join(', ')}`);
+
+  lines.push(
+    '',
+    'Judge by what the task is actually about, not by single keywords.',
+    '"Pay the electricity bill" is Finance even if it concerns the home.',
+    '',
+    'Reply with only a JSON object, no prose and no code fence:',
+    '{"category": "<one category from the list>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}',
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Pull a usable signal out of whatever the model said.
+ *
+ * Models wrap JSON in code fences, add a preamble, or answer with a bare word.
+ * All of those are recoverable, so parse leniently and validate strictly — an
+ * unrecognised category is discarded rather than trusted.
+ */
+export function parseGeminiReply(text: string): CategorySignal | null {
+  if (!text) return null;
+
+  const stripped = text.replace(/```(?:json)?/gi, '').trim();
+  const match = /\{[\s\S]*\}/.exec(stripped);
+
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]) as {
+        category?: unknown;
+        confidence?: unknown;
+        reason?: unknown;
+      };
+      if (isCategory(parsed.category)) {
+        const raw = Number(parsed.confidence);
+        const confidence = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.8;
+        const reason = typeof parsed.reason === 'string' && parsed.reason.trim()
+          ? parsed.reason.trim().slice(0, 80)
+          : 'classified by Gemini';
+        return { category: parsed.category, confidence, reason };
+      }
+    } catch {
+      // Fall through to the bare-word search below.
+    }
+  }
+
+  // No usable JSON: accept a reply that is just the category name.
+  for (const category of CATEGORIES) {
+    if (new RegExp(`\\b${category}\\b`, 'i').test(stripped)) {
+      return { category, confidence: 0.6, reason: 'classified by Gemini' };
+    }
+  }
+
+  return null;
+}
+
+/** The text of the first candidate, or '' when the reply was blocked or empty. */
+export function extractText(body: unknown): string {
+  const parts = (body as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  })?.candidates?.[0]?.content?.parts;
+
+  if (!Array.isArray(parts)) return '';
+  return parts.map((p) => p?.text ?? '').join('').trim();
+}
+
+/** Turn Google's error envelope into one sentence worth showing. */
+export function describeGeminiError(body: unknown, status?: number): string {
+  const error = (body as { error?: { message?: string; status?: string; details?: unknown[] } })
+    ?.error;
+
+  const reason = (error?.details as Array<{ reason?: string }> | undefined)?.find(
+    (d) => typeof d?.reason === 'string',
+  )?.reason;
+
+  if (reason === 'API_KEY_INVALID') {
+    return 'Google rejected the API key. Check you pasted it in full.';
+  }
+  if (reason === 'SERVICE_DISABLED' || error?.status === 'PERMISSION_DENIED') {
+    return 'That key cannot use the Gemini API. Create one at aistudio.google.com/apikey.';
+  }
+  if (status === 429 || error?.status === 'RESOURCE_EXHAUSTED') {
+    return 'Gemini rate limit reached. It will work again shortly.';
+  }
+  if (status === 404) {
+    return 'That Gemini model is not available to your key. Pick another in AI settings.';
+  }
+  return error?.message ?? 'Gemini request failed.';
+}
+
+export class GeminiError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GeminiError';
+  }
+}
+
+async function call(path: string, apiKey: string, init?: RequestInit): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_ROOT}${path}`, {
+      ...init,
+      headers: {
+        'x-goog-api-key': apiKey,
+        ...(init?.body ? { 'content-type': 'application/json' } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch {
+    throw new GeminiError('Could not reach Gemini. Check your connection.');
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new GeminiError(describeGeminiError(body, response.status));
+  return body;
+}
+
+/**
+ * Score a model for this job: cheap, fast, text-only.
+ * Higher is better; anything at or below zero is unsuitable.
+ */
+export function scoreModel(name: string): number {
+  const id = name.toLowerCase();
+
+  // Wrong modality or job entirely.
+  if (/embedding|aqa|imagen|image-generation|tts|audio|video|veo|learnlm/.test(id)) return -1;
+
+  let score = 0;
+  if (id.includes('flash')) score += 100; // cheapest and fastest family
+  if (id.includes('lite')) score += 20; // cheaper still
+  if (id.includes('pro')) score += 40; // works, but overkill here
+
+  // Prefer a stable release over previews and dated snapshots.
+  if (/preview|exp|experimental/.test(id)) score -= 30;
+  if (/\d{4}-\d{2}-\d{2}|\d{3,}$/.test(id)) score -= 10;
+  if (id.includes('thinking')) score -= 25; // spends tokens reasoning about a one-word answer
+
+  // Favour the newest version number present in the id.
+  const version = /gemini-(\d+(?:\.\d+)?)/.exec(id);
+  if (version) score += Number(version[1]) * 10;
+
+  return score || 1;
+}
+
+export interface GeminiModel {
+  id: string;
+  label: string;
+}
+
+/**
+ * Ask Google which models this key can actually use.
+ *
+ * Model ids change faster than any hardcoded default survives, so the app reads
+ * the list rather than assuming one — this doubles as the key's validity check.
+ */
+export async function listGeminiModels(apiKey: string): Promise<GeminiModel[]> {
+  const body = await call('/models?pageSize=200', apiKey, { method: 'GET' });
+  const models = (body as {
+    models?: Array<{ name?: string; displayName?: string; supportedGenerationMethods?: string[] }>;
+  })?.models;
+
+  if (!Array.isArray(models)) return [];
+
+  return models
+    .filter((m) => m?.name)
+    .filter((m) =>
+      // Older responses omit the field; keep those rather than hide everything.
+      !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'),
+    )
+    .map((m) => ({ id: m.name!.replace(/^models\//, ''), label: m.displayName ?? m.name! }))
+    .filter((m) => scoreModel(m.id) > 0)
+    .sort((a, b) => scoreModel(b.id) - scoreModel(a.id) || a.id.localeCompare(b.id));
+}
+
+/** The best available model for short classification, or null if none fit. */
+export function pickDefaultModel(models: GeminiModel[]): string | null {
+  return models[0]?.id ?? null;
+}
+
+/** One classification call. Throws {@link GeminiError}; callers fall back to rules. */
+export async function classifyWithGemini(
+  settings: GeminiSettings,
+  input: RuleInput,
+): Promise<CategorySignal> {
+  const prompt = buildPrompt(input);
+  const path = `/models/${encodeURIComponent(settings.model)}:generateContent`;
+
+  // temperature 0 for a stable answer. maxOutputTokens is deliberately NOT set:
+  // on a reasoning model a small budget is spent thinking and the reply comes
+  // back empty.
+  const full = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0 },
+  };
+
+  let body: unknown;
+  try {
+    body = await call(path, settings.apiKey, { method: 'POST', body: JSON.stringify(full) });
+  } catch (error) {
+    // If the API rejected a field rather than the key, retry with the smallest
+    // body the API accepts, so an option name going stale cannot break the app.
+    const message = error instanceof Error ? error.message : '';
+    if (!/invalid|unknown|unsupported|field/i.test(message)) throw error;
+    body = await call(path, settings.apiKey, {
+      method: 'POST',
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+    });
+  }
+
+  const signal = parseGeminiReply(extractText(body));
+  if (!signal) throw new GeminiError('Gemini replied with no usable category.');
+  return signal;
+}
+
+/**
+ * A Categorizer that asks Gemini and quietly falls back to `fallback` on any
+ * failure. `onError` lets the UI mention it without blocking the capture.
+ */
+export function createGeminiCategorizer(
+  settings: GeminiSettings,
+  fallback: Categorizer,
+  onError?: (message: string) => void,
+): Categorizer {
+  return {
+    name: `gemini:${settings.model}`,
+    async categorize(input) {
+      try {
+        return await classifyWithGemini(settings, input);
+      } catch (error) {
+        onError?.(error instanceof Error ? error.message : 'Gemini request failed.');
+        return fallback.categorize(input);
+      }
+    },
+  };
+}

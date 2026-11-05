@@ -14,9 +14,12 @@ import { CategoryChip, DueChip, PriorityChip, ProjectChip, TagChip } from './Chi
 export default function QuickAdd({
   onCreate,
   busy,
+  aiEnabled = false,
 }: {
   onCreate: (text: string) => Promise<Task | null>;
   busy: boolean;
+  /** With Gemini on, the preview category is the local guess, not the verdict. */
+  aiEnabled?: boolean;
 }) {
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,8 +69,13 @@ export default function QuickAdd({
 
       {preview ? (
         <div className="preview" aria-live="polite">
-          <span className="preview-label">Will save as</span>
+          <span className="preview-label">{aiEnabled ? 'Saving as' : 'Will save as'}</span>
           <CategoryChip category={preview.category} />
+          {aiEnabled && (
+            <span className="chip ai" title="Gemini confirms the category when you add it">
+              ✦ Gemini decides
+            </span>
+          )}
           <PriorityChip priority={preview.parsed.priority} />
           {preview.parsed.due && (
             <DueChip due={preview.parsed.due} daysAway={preview.daysAway} />

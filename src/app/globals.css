@@ -500,3 +500,51 @@ button { cursor: pointer; }
   padding: 1px 5px;
   font-size: 12px;
 }
+
+/* ---------------- AI settings ---------------- */
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-head h2 { margin: 0; }
+
+.icon-button.on { border-color: var(--accent); color: var(--accent); }
+
+.chip.ai { background: var(--accent-soft); color: var(--accent); }
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  align-items: center;
+  margin: 18px 0;
+  font-size: 14px;
+}
+
+.kv dt { color: var(--muted); font-size: 13px; }
+.kv dd { margin: 0; }
+
+.kv select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.button-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.button-row .primary-button { margin-top: 0; }
+
+.note {
+  font-size: 13.5px;
+  border-radius: 10px;
+  padding: 10px 13px;
+  margin: 14px 0 0;
+}
+
+.note.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+.note.bad { background: var(--danger-soft); color: var(--danger); }

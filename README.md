@@ -90,11 +90,35 @@ Open that URL, paste the token and the database link, press **Connect**. On a
 phone, use **Add to Home Screen** (iOS) or **Install app** (Android) to get an
 icon and a full-screen window.
 
-## Where your token is kept
+## AI classification (optional)
 
-In your browser's local storage, on the device you typed it into. It is never
-committed, never part of the built JavaScript, and never sent anywhere except
-`api.notion.com`. The Notion API sends CORS headers, which is what makes a
+Out of the box, categories come from keyword rules in
+`src/lib/categorize/rules.ts` — instant, free, offline, and sometimes wrong.
+
+Press **✦** in the header to add a free [Google AI Studio
+key](https://aistudio.google.com/apikey) and Gemini classifies instead, reading
+the whole task rather than matching words. Dates, priority, `#project` and
+`@tag` are still parsed on your device either way — the deterministic parser is
+better at those and costs nothing.
+
+- **The model is not hardcoded.** On connecting, the app asks Google which
+  models your key can use and picks the cheapest suitable one. You can change it
+  in the same panel, and **Test it** runs a real classification so you can see
+  it work.
+- **Failures are invisible to your workflow.** If Gemini is slow, rate-limited
+  or down, the keyword rules answer and the task is still saved. You get a note,
+  not a lost task.
+- **Restrict the key.** Unlike the Notion token, a Google API key can be locked
+  to one website. In [Google Cloud
+  credentials](https://console.cloud.google.com/apis/credentials), set an
+  **HTTP referrer** restriction to your Pages address. Then a copied key is
+  useless anywhere else. Two minutes well spent.
+
+## Where your tokens are kept
+
+In your browser's local storage, on the device you typed them into. They are
+never committed, never part of the built JavaScript, and never sent anywhere
+except `api.notion.com` and, if you enable it, `generativelanguage.googleapis.com`. The Notion API sends CORS headers, which is what makes a
 server unnecessary.
 
 Two things worth knowing:
@@ -159,12 +183,13 @@ is why they are testable without mocks — and why "tomorrow" means *your*
 tomorrow. Those modules survived the move from a server app to a static one
 without a single change.
 
-### Swapping keyword rules for Claude
+### Adding another classifier
 
-`src/lib/categorize/index.ts` defines a `Categorizer` interface. Adding a
-Claude-backed implementation means writing one file and returning it from
-`getCategorizer()` when `ANTHROPIC_API_KEY` is set. Nothing else imports the
-rules directly. See Phase 8 in `PLAN.md`.
+`src/lib/categorize/index.ts` defines a `Categorizer` interface, and the
+categorizer is injected into `capture.ts` and the task repository rather than
+looked up globally. `gemini.ts` is one implementation; another provider means
+one new file and one line in `App.tsx`. Nothing else imports the rules
+directly.
 
 ## Database schema
 

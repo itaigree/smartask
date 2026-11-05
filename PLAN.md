@@ -114,9 +114,44 @@ Later phases must not violate these:
 - [x] Phase 9: Static data layer — `config.ts`, browser `notion.ts`, `tasks.ts` repository factory; API routes and `http.ts` deleted — Done when: `npm test` passes and nothing under `src/` reads `process.env` for Notion.
 - [x] Phase 10: Connect screen & client-side board — `App.tsx`, `ConnectForm.tsx`, `TaskBoard` loads through the repository — Done when: with no token the app shows a connect form, and saving one renders the board.
 - [x] Phase 11: Static build & GitHub Pages deploy — `output: 'export'`, basePath, `.github/workflows/deploy.yml` — Done when: `next build` emits `out/` and pushing to `main` publishes the site.
-- [ ] Phase 8 (deferred): Claude categorizer — `categorize/claude.ts` behind `ANTHROPIC_API_KEY` — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works.
+- [x] Phase 8: AI categorizer — `categorize/gemini.ts` behind a user-supplied Google AI Studio key — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works. **Built with Gemini rather than Claude at the user's request; the `Categorizer` seam took it unchanged.**
 
 ## Status log
+
+**2026-11-05 — Phase 8: Gemini classification.**
+
+The user asked for AI classification with a Google key stored the same way as
+the Notion token. The `Categorizer` interface from Phase 2 took it without
+modification — the only change to existing code was making the categorizer an
+injected argument rather than a module singleton, so `capture.ts` and the
+repository now receive one.
+
+Verified against the live API rather than documentation, because
+`ai.google.dev` is unreachable from this environment while
+`generativelanguage.googleapis.com` is not:
+
+- A CORS preflight from `https://itaigree.github.io` returns
+  `access-control-allow-origin` echoing that origin and
+  `access-control-allow-headers: content-type,x-goog-api-key`. Browser calls
+  work and the key travels in a header, not the URL.
+- A request with an invalid key returns the error envelope the code parses,
+  with `details[].reason === 'API_KEY_INVALID'`.
+- A browser driving the built app reached Google and rendered the mapped
+  message, so CORS, auth transport and error handling are confirmed end to end.
+
+What could not be verified: a *successful* classification, which needs a real
+key. Two defences cover that uncertainty rather than a guess:
+
+1. **Model ids are not hardcoded.** The app calls ListModels with the user's key
+   and scores the results, so it cannot ship a model id that has since retired.
+2. **A rejected request option is retried with a minimal body**, so a
+   `generationConfig` field name going stale degrades instead of breaking.
+
+`maxOutputTokens` is deliberately not sent: on a reasoning model a small budget
+is consumed thinking and the reply comes back empty.
+
+Any Gemini failure falls back to the keyword rules and the task is still saved.
+A task filed in the wrong category beats a task that was never captured.
 
 **2026-11-05 — Scope change: GitHub Pages instead of Vercel (Phases 9-11).**
 

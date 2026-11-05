@@ -14,6 +14,7 @@ export interface NotionConfig {
 }
 
 const STORAGE_KEY = 'smartask.notion.v1';
+const GEMINI_KEY = 'smartask.gemini.v1';
 
 /** Accepts a bare id or any Notion URL containing one; returns a dashed uuid. */
 export function normalizeDatabaseId(raw: string): string | null {
@@ -72,4 +73,56 @@ export function clearConfig(): void {
 export function maskToken(token: string): string {
   if (token.length <= 10) return '••••';
   return `${token.slice(0, 6)}…${token.slice(-4)}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gemini (optional)
+ * ------------------------------------------------------------------ */
+
+export interface GeminiConfig {
+  apiKey: string;
+  model: string;
+}
+
+/**
+ * Kept under its own storage key so turning the AI off, or a corrupt value,
+ * can never cost someone their Notion connection.
+ */
+export function loadGeminiConfig(): GeminiConfig | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(GEMINI_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<GeminiConfig>;
+    if (!parsed?.apiKey || !parsed?.model) return null;
+    return { apiKey: parsed.apiKey, model: parsed.model };
+  } catch {
+    return null;
+  }
+}
+
+export function saveGeminiConfig(config: GeminiConfig): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    window.localStorage.setItem(GEMINI_KEY, JSON.stringify(config));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearGeminiConfig(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(GEMINI_KEY);
+  } catch {
+    // Nothing useful to do.
+  }
+}
+
+/** Google AI Studio keys have no fixed prefix, so only obvious mis-pastes are caught. */
+export function validateApiKey(raw: string): string | null {
+  const key = String(raw ?? '').trim();
+  if (!key || /\s/.test(key) || key.length < 20) return null;
+  return key;
 }

@@ -1,5 +1,6 @@
 import type { Client } from '@notionhq/client';
 import { draftFromText, ValidationError } from './capture.ts';
+import { getCategorizer, type Categorizer } from './categorize/index.ts';
 import { cached, invalidate, DEFAULT_TTL_MS } from './cache.ts';
 import type { NotionConfig } from './config.ts';
 import {
@@ -26,7 +27,10 @@ export interface TaskRepository {
   archiveTask(id: string): Promise<void>;
 }
 
-export function createTaskRepository(config: NotionConfig): TaskRepository {
+export function createTaskRepository(
+  config: NotionConfig,
+  categorizer: Categorizer = getCategorizer(),
+): TaskRepository {
   const client: Client = createClient(config);
   const cacheKey = `tasks:${config.databaseId}`;
 
@@ -78,7 +82,7 @@ export function createTaskRepository(config: NotionConfig): TaskRepository {
     },
 
     async captureTask(text, now = new Date()) {
-      return createTask(await draftFromText(text, now));
+      return createTask(await draftFromText(text, now, categorizer));
     },
 
     createTask,
