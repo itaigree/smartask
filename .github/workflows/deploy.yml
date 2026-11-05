@@ -1,8 +1,8 @@
 # Builds the static site and publishes it to GitHub Pages on every push to main.
 #
-# One-time setup in the repository: Settings → Pages → Build and deployment →
-# Source: "GitHub Actions". Without that, this workflow runs but publishes
-# nothing.
+# This enables GitHub Pages itself on the first run. If that is blocked by an
+# organisation policy, set it by hand: Settings → Pages → Build and deployment →
+# Source: "GitHub Actions", then re-run this workflow.
 name: Deploy to GitHub Pages
 
 on:
@@ -42,7 +42,11 @@ jobs:
           # repository does not silently break every asset URL.
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
 
+      # enablement turns Pages on for the repository if it is not already,
+      # so the first deploy does not fail on a setting nobody remembered.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:

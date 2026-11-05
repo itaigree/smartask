@@ -77,9 +77,12 @@ exactly like a wrong database id.
 
 ### 4. Publish the site
 
-In your fork: **Settings → Pages → Build and deployment → Source: GitHub
-Actions**. Then push to `main`. The workflow in `.github/workflows/deploy.yml`
-builds the site and publishes it to `https://<you>.github.io/<repo>/`.
+Push to `main`. The workflow in `.github/workflows/deploy.yml` enables GitHub
+Pages, builds the site and publishes it to `https://<you>.github.io/<repo>/`.
+
+If an organisation policy stops the workflow enabling Pages, set it by hand —
+**Settings → Pages → Build and deployment → Source: GitHub Actions** — and
+re-run the failed workflow.
 
 ### 5. Open it and connect
 
