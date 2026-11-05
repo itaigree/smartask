@@ -444,3 +444,59 @@ button { cursor: pointer; }
 }
 
 .footer a { color: var(--muted); }
+
+/* ---------------- connect form ---------------- */
+
+.connect-form { display: flex; flex-direction: column; margin-top: 18px; }
+
+.connect-form label {
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 5px;
+}
+
+.connect-form input {
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  outline: none;
+  width: 100%;
+}
+
+.connect-form input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field-hint {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 6px 0 16px;
+}
+
+.primary-button {
+  margin-top: 4px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.disclosure {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.disclosure h3 { font-size: 13.5px; margin: 0 0 6px; }
+.disclosure p { font-size: 13px; margin: 0 0 8px; }
+
+.disclosure code {
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+}

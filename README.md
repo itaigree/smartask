@@ -8,8 +8,13 @@ out the due date, the priority, the project and the tags, works out that it is a
 those tasks back and shows them in views worth looking at — what to do *now*,
 what is due today, what is coming — instead of one flat list.
 
-Notion is the database. There is no second store to host or back up, and you can
-edit any task in Notion itself and see the change in the app.
+Notion is the database. There is no second store to host or back up, and you
+can edit any task in Notion itself and see the change in the app.
+
+**There is no server.** The app is a static site on GitHub Pages. You paste your
+Notion token into it once, it is kept in your browser on your own device, and
+your browser talks to Notion directly. Nothing is stored anywhere else and
+nothing passes through a third party.
 
 ## What the capture box understands
 
@@ -48,125 +53,108 @@ Everything is editable in Notion afterwards; it is a normal database.
 
 ## Setup
 
-You need a free Notion account. Takes about five minutes.
+You need a free Notion account. No Node.js, no terminal, no hosting account.
 
 ### 1. Create a Notion integration
 
 Go to [notion.so/my-integrations](https://www.notion.so/my-integrations) →
-**New integration** → give it a name (e.g. *SmartTask*) and pick your workspace.
-Copy the **Internal Integration Secret** — it starts with `ntn_`.
+**New integration** → name it and pick your workspace. Copy the **Internal
+Integration Secret** — it starts with `ntn_`.
 
-### 2. Pick a parent page and connect the integration
+### 2. Create the tasks database
 
-In Notion, open (or create) the page the task database should live inside.
-Click **•••** at the top right → **Connections** → **Connect to** → your
-integration. Without this step Notion will say it cannot find the page.
+Either run `npm run setup:notion` locally (see Development), or create a database
+by hand with the properties listed under [Database schema](#database-schema).
 
-Then **Copy link** on that page — you will paste the whole URL in a moment.
+### 3. Connect the integration to it
 
-### 3. Configure
+Open the database in Notion → **•••** → **Connections** → add your integration.
 
-```bash
-git clone <your fork> smartask && cd smartask
-npm install
-cp .env.example .env.local
-```
+**This step is not optional and it is the one people miss.** A Notion integration
+can see nothing until you share a page with it, and Notion reports anything it
+cannot see as *not found* rather than *forbidden* — so skipping this looks
+exactly like a wrong database id.
 
-Edit `.env.local`:
+### 4. Publish the site
 
-```
-NOTION_TOKEN=ntn_…                        # from step 1
-NOTION_PARENT_PAGE_ID=https://notion.so/… # the page link from step 2
-```
+In your fork: **Settings → Pages → Build and deployment → Source: GitHub
+Actions**. Then push to `main`. The workflow in `.github/workflows/deploy.yml`
+builds the site and publishes it to `https://<you>.github.io/<repo>/`.
 
-### 4. Create the database
+### 5. Open it and connect
 
-```bash
-npm run setup:notion
-```
+Open that URL, paste the token and the database link, press **Connect**. On a
+phone, use **Add to Home Screen** (iOS) or **Install app** (Android) to get an
+icon and a full-screen window.
 
-It creates a **SmartTask** database with the right schema and prints its id.
-Put that id in `.env.local`:
+## Where your token is kept
 
-```
-NOTION_DATABASE_ID=…
-```
+In your browser's local storage, on the device you typed it into. It is never
+committed, never part of the built JavaScript, and never sent anywhere except
+`api.notion.com`. The Notion API sends CORS headers, which is what makes a
+server unnecessary.
 
-**If the database already exists** — someone made it for you, or you made it by
-hand — skip this step and the `NOTION_PARENT_PAGE_ID` line entirely. Just open
-the database in Notion, **••• → Connections** and add your integration, then put
-its id in `NOTION_DATABASE_ID`. The id is the 32-character hex string in the
-database's URL. Run `npm run check:notion` to confirm the schema matches.
+Two things worth knowing:
 
-> The Connections step is per-integration, and it is not optional. A database
-> created through a different Notion connection (the Claude connector, say, or a
-> colleague's account) is invisible to *your* integration until you add it here.
+- **Local storage is scoped to the domain, not the app.** On
+  `<you>.github.io`, any other project you publish under that domain can read the
+  stored token. A custom domain gives this app its own origin and removes that.
+  Set `NEXT_PUBLIC_BASE_PATH` to `''` in the workflow when you move to one.
+- **Anything that runs on the page can read the token.** That is the trade for
+  having no server. Use the ⏻ button to forget it on a shared device.
 
-### 5. Verify the connection
-
-```bash
-npm run check:notion
-```
-
-This is read-only — it changes nothing in your workspace. It walks the chain one
-link at a time (token → database → schema → an actual read) and tells you which
-link is broken and how to fix it, instead of leaving you to guess from a 500.
-
-### 6. Run
-
-```bash
-npm run dev          # http://localhost:3000
-```
-
-If the env vars are missing the app shows a setup screen rather than crashing,
-so you can always tell what is not configured yet.
-
-## Deploying to Vercel
-
-1. Push this repo to GitHub.
-2. [vercel.com/new](https://vercel.com/new) → import the repo. Next.js is
-   detected, no build settings to change.
-3. Add `NOTION_TOKEN` and `NOTION_DATABASE_ID` under
-   **Settings → Environment Variables** (`NOTION_PARENT_PAGE_ID` is only needed
-   for the setup script, not at runtime).
-4. Deploy, then add the URL to your phone's home screen.
-
-The token is only ever read on the server, so it never reaches the browser.
+If that trade is wrong for you, the app can be put back behind a server — the
+token then lives in an environment variable and never reaches the browser. See
+the Status log in `PLAN.md` for what that change involves.
 
 ## Development
 
 ```bash
 npm run dev           # dev server
-npm test              # 46 unit tests, no network needed
+npm test              # 51 unit tests, no network needed
 npm run lint          # tsc --noEmit
-npm run build         # production build
-npm run check:notion  # diagnose the Notion connection (read-only)
+npm run build         # static export into out/
+npm run check:notion  # diagnose a Notion connection (read-only)
 npm run setup:notion  # create the tasks database (run once)
 ```
+
+The two `*:notion` scripts are local developer tools and read `NOTION_TOKEN`
+and `NOTION_DATABASE_ID` from `.env.local`. The deployed app does not use them
+or any environment variable — it reads the credentials you type into it.
+
+`npm run build` produces `out/`, a folder of plain files. Set
+`NEXT_PUBLIC_BASE_PATH=/<repo>` when building for a GitHub project site, as the
+workflow does; leave it unset for a custom domain or local preview.
 
 ### How it fits together
 
 ```
+.github/workflows/deploy.yml   builds and publishes to GitHub Pages on push to main
 src/
   app/
-    page.tsx                 server component: reads Notion, renders the board
-    api/tasks/route.ts       GET list / POST capture
-    api/tasks/[id]/route.ts  PATCH update / DELETE (to Notion trash)
-  components/                client components: QuickAdd, ViewTabs, TaskBoard, TaskCard
+    page.tsx          a static shell around the client app
+    manifest.ts       installable-on-phone metadata
+  components/
+    App.tsx           connect screen or board
+    ConnectForm.tsx   takes the token, states where it is stored
+    TaskBoard.tsx     loads, renders and mutates through the repository
+    QuickAdd.tsx  TaskCard.tsx  ViewTabs.tsx  Chips.tsx
   lib/
-    parse.ts                 text -> structured draft      (pure, tested)
-    categorize/              Categorizer interface + keyword rules (pure, tested)
-    capture.ts               parse + categorize pipeline    (pure, tested)
-    views.ts                 focus scoring and grouping     (pure, tested)
-    notion-mapping.ts        Notion page <-> Task           (pure, tested)
-    notion.ts                SDK client, config, data source
-    tasks.ts                 repository: list / create / update / archive
-    cache.ts                 20s read cache, cleared on every write
+    parse.ts          text -> structured draft            (pure, tested)
+    categorize/       Categorizer interface + rules       (pure, tested)
+    capture.ts        parse + categorize pipeline         (pure, tested)
+    views.ts          focus scoring and grouping          (pure, tested)
+    notion-mapping.ts Notion page <-> Task                (pure, tested)
+    config.ts         token + database id in localStorage (pure helpers tested)
+    notion.ts         browser Notion client, error messages
+    tasks.ts          repository factory over a config
+    cache.ts          20s read cache, cleared on every write
 ```
 
 The pure modules take `now` as an argument rather than reading the clock, which
 is why they are testable without mocks — and why "tomorrow" means *your*
-tomorrow: the browser sends its own timestamp when you capture a task.
+tomorrow. Those modules survived the move from a server app to a static one
+without a single change.
 
 ### Swapping keyword rules for Claude
 
@@ -175,18 +163,43 @@ Claude-backed implementation means writing one file and returning it from
 `getCategorizer()` when `ANTHROPIC_API_KEY` is set. Nothing else imports the
 rules directly. See Phase 8 in `PLAN.md`.
 
+## Database schema
+
+`npm run setup:notion` creates exactly this. To build it by hand, the names and
+types must match — the app reads properties by name.
+
+| Property | Type | Notes |
+|---|---|---|
+| `Name` | Title | The task title |
+| `Category` | Select | Work, Personal, Errands, Health, Finance, Learning, Home, Inbox |
+| `Priority` | Select | Urgent, High, Normal, Low |
+| `Status` | Select | Todo, Doing, Done — **a Select, not Notion's Status type** |
+| `Due` | Date | |
+| `Project` | Text | |
+| `Tags` | Multi-select | |
+| `Note` | Text | |
+| `Completed` | Date | Stamped when a task is ticked done |
+
+`Status` is the one to watch: Notion's native *Status* property looks almost
+identical in the editor but is a different type over the API, and the app will
+not read it.
+
 ## Troubleshooting
 
-Run `npm run check:notion` first — it names the broken link. The failures worth
-knowing about:
+The app shows Notion's failures in a red banner rather than breaking, so the
+message on screen is the thing to read. The failures worth knowing about:
 
 | What you see | What it means |
 |---|---|
-| `Notion rejected the token` | `NOTION_TOKEN` is wrong or was regenerated. Copy the Internal Integration Secret again, in full. |
+| `Notion rejected the token` | The token is wrong or was regenerated. Press ⏻ to forget it and paste it again, in full. |
 | `Notion cannot find that page or database` | Almost always the missing **Connections** step, not a wrong id. Notion reports anything an integration was never given access to as *not found*, never as *forbidden* — so "not found" usually means "not shared". |
-| `Could not reach api.notion.com` | A network problem, not an auth one: VPN, proxy, firewall, or a sandbox with a host allowlist. |
-| `Missing property "…"` | The database schema drifted from what the app expects — usually a property renamed by hand in Notion. Rename it back, or create a fresh database with `npm run setup:notion`. |
+| `Could not reach Notion` | A network problem, not an auth one: no connection, or a VPN, proxy or firewall blocking `api.notion.com`. |
+| `Notion rejected the data` | The database schema does not match the table above — usually a property renamed by hand in Notion. |
 | `Notion is rate limiting` | Roughly 3 requests/second. Wait and retry. |
+| The connect screen keeps coming back | The browser is refusing to store anything. Private browsing usually causes this; try a normal window. |
+
+`npm run check:notion` does the same checks from a terminal and names the broken
+link, if you have the repo cloned locally.
 
 A thing worth internalising: **the token says *who* the app is, and the
 Connections step says *what it may see*.** They are separate, and a valid token
@@ -200,3 +213,9 @@ with no page access looks exactly like a wrong id.
   can restore it from Notion.
 - **Not in v1:** recurring tasks, reminders, multiple users, and pushing Notion
   edits back to an open tab (hit ↻ to re-read).
+- **Each browser connects separately.** The token lives on one device, so a
+  phone and a laptop each need it pasted once. The tasks are shared because
+  Notion holds them; only the credential is per-device.
+- **The site is public, your data is not.** A GitHub Pages site is readable by
+  anyone, but it ships no credentials — a visitor sees the connect screen and
+  nothing of yours.

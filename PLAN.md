@@ -10,8 +10,13 @@ smart views (Focus, Today, Upcoming, By Category) rather than one flat list.
 Single user, phone-first.
 
 ## Stack
-- **Next.js 16 (App Router) + React 19 + TypeScript** — one codebase serves the
-  UI and the server-side API, so the Notion token never reaches the browser.
+> **Revised 2026-11-05 (see Status log):** the app is now a *static* site hosted
+> on GitHub Pages. There is no server. The Notion token is entered once and kept
+> in the browser's local storage, and the browser calls the Notion API directly
+> (the Notion API sends CORS headers, so this works).
+
+- **Next.js 16 (App Router) + React 19 + TypeScript**, built with
+  `output: 'export'` to plain HTML/CSS/JS — no server to run or pay for.
 - **Plain CSS (CSS variables, no framework)** — zero build risk, full control of
   the mobile layout, and the app is small enough not to need utility classes.
 - **Notion API via `@notionhq/client`** — the database. No second datastore to
@@ -36,8 +41,7 @@ smartask/
     app/
       layout.tsx  globals.css
       page.tsx                 server component: loads tasks, renders the board
-      api/tasks/route.ts       GET list / POST create
-      api/tasks/[id]/route.ts  PATCH update / DELETE archive
+      manifest.ts              installable-on-phone metadata
     components/
       QuickAdd.tsx   TaskBoard.tsx   TaskCard.tsx   ViewTabs.tsx
     lib/
@@ -47,8 +51,9 @@ smartask/
         index.ts      Categorizer interface + getCategorizer()
         rules.ts      keyword rules implementation (v1)
       views.ts        focus scoring + grouping into views
-      notion.ts       Notion client, page <-> Task mapping, schema constants
-      tasks.ts        repository: list / create / update / complete
+      config.ts       token + database id in localStorage
+      notion.ts       browser Notion client (dangerouslyAllowBrowser)
+      tasks.ts        repository factory over a config
       cache.ts        TTL cache + invalidation on write
   tests/
     parse.test.ts  rules.test.ts  views.test.ts
@@ -78,8 +83,10 @@ smartask/
 
 ## Decisions & constraints
 Later phases must not violate these:
-1. **The Notion token is server-side only.** It is read from `process.env` inside
-   `src/lib/notion.ts`; no client component may import that module.
+1. ~~**The Notion token is server-side only.**~~ **Superseded 2026-11-05.** The
+   token lives in the browser's local storage on the user's own device. It is
+   never committed, never in the built bundle, and never sent anywhere but
+   `api.notion.com`. The connect screen must say plainly where it is stored.
 2. **Notion is the source of truth.** No local database, no local task JSON. The
    cache is a read optimisation only and is cleared on every write.
 3. **Categorization goes through the `Categorizer` interface** in
@@ -90,6 +97,9 @@ Later phases must not violate these:
 5. **The app degrades without Notion configured**: if the env vars are missing,
    the UI shows a setup screen instead of crashing.
 6. **No framework CSS.** Styling is `globals.css` + CSS variables, light/dark.
+6b. **Nothing may require a server.** No API routes, no server-side data
+   fetching, no dynamic functions — `next build` must produce a clean static
+   export or the deploy breaks.
 7. **Out of v1 scope:** recurring tasks, notifications, multi-user, Notion->app
    webhooks, offline mode.
 
@@ -101,9 +111,38 @@ Later phases must not violate these:
 - [x] Phase 5: Views engine — `views.ts` + tests — Done when: `npm test` passes, including focus-score ordering and overdue handling.
 - [x] Phase 6: UI — layout, QuickAdd, ViewTabs, TaskBoard, TaskCard, globals.css — Done when: on a phone-width screen you can add a task, see it land in the right view, and tick it done.
 - [x] Phase 7: Docs & deploy — README with Notion + Vercel setup — Done when: a stranger can follow README.md from zero to a deployed app.
+- [x] Phase 9: Static data layer — `config.ts`, browser `notion.ts`, `tasks.ts` repository factory; API routes and `http.ts` deleted — Done when: `npm test` passes and nothing under `src/` reads `process.env` for Notion.
+- [x] Phase 10: Connect screen & client-side board — `App.tsx`, `ConnectForm.tsx`, `TaskBoard` loads through the repository — Done when: with no token the app shows a connect form, and saving one renders the board.
+- [x] Phase 11: Static build & GitHub Pages deploy — `output: 'export'`, basePath, `.github/workflows/deploy.yml` — Done when: `next build` emits `out/` and pushing to `main` publishes the site.
 - [ ] Phase 8 (deferred): Claude categorizer — `categorize/claude.ts` behind `ANTHROPIC_API_KEY` — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works.
 
 ## Status log
+
+**2026-11-05 — Scope change: GitHub Pages instead of Vercel (Phases 9-11).**
+
+The user asked whether GitHub Pages could host this. My first answer was that it
+could not, for two reasons: a static site cannot hold a secret, and Notion's API
+would block browser calls on CORS. **The second reason was wrong.** The Notion
+SDK's own README states the API sends CORS headers and ships a
+`dangerouslyAllowBrowser` flag for exactly this case. That changes the verdict:
+a static, bring-your-own-token app is viable, and the user chose it.
+
+Phases affected by the change:
+
+- **Phase 3 and 4 are superseded.** The API routes and `src/lib/http.ts` are
+  deleted; `notion.ts` and `tasks.ts` are rewritten to run in the browser against
+  a config object rather than `process.env`.
+- **Phase 6 is amended.** `page.tsx` is a client component; the read-only
+  `SetupNotice` becomes an interactive connect form.
+- **Phases 2 and 5 are untouched.** `parse.ts`, `categorize/`, `capture.ts`,
+  `views.ts` and `notion-mapping.ts` are pure and moved across unchanged — the
+  reason the rewrite is small.
+
+Accepted risk, stated to the user before building: local storage is scoped to
+the *origin*, so on `itaigree.github.io` every GitHub Pages project under that
+domain can read the stored token. The user accepted this rather than buy a
+custom domain. A custom domain remains the fix; `NEXT_PUBLIC_BASE_PATH` is
+configurable so moving to one needs no code change.
 
 **2026-11-04 — Phases 1-7 complete (v1 shipped).**
 All seven v1 phases built and verified in one session. 46 unit tests pass,
