@@ -32,6 +32,8 @@ export default function QuickAdd({
   const spokenBase = useRef('');
   const voice = useRef<VoiceControl | null>(null);
   const [listening, setListening] = useState(false);
+  /** Speech has just filled the box: prompt the user to check it before adding. */
+  const [heard, setHeard] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [speechLang, setSpeechLang] = useState<SpeechLang>('en-US');
   useEffect(() => setSpeechLang(loadSpeechLang()), []);
@@ -70,6 +72,7 @@ export default function QuickAdd({
     const created = await onCreate(trimmed);
     if (created) {
       setText('');
+      setHeard(false);
       setVoiceError(null);
     }
     return Boolean(created);
@@ -77,18 +80,21 @@ export default function QuickAdd({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    // Tapping Add mid-speech adds what is in the box now and drops the voice
-    // session, so a late recognition result cannot write it back afterwards.
-    voice.current?.cancel();
+    // Not while listening: the box still holds interim words, and Android's
+    // final result can arrive after a tap — saving a cut-off task and then
+    // refilling the box. Add waits until speech has ended.
+    if (listening) return;
     await add(text);
     inputRef.current?.focus();
   }
 
-  /** Speech ended: add it straight away, hands-free. */
-  function addSpoken(spoken: string) {
-    const full = mergeTranscript(spokenBase.current, spoken);
-    setText(full); // visible while it saves, and kept if saving fails
-    void add(full);
+  /**
+   * Speech ended. Put the complete transcript in the box and stop there: the
+   * user checks it, fixes anything misheard, and taps Add themselves.
+   */
+  function showSpoken(spoken: string) {
+    setText(mergeTranscript(spokenBase.current, spoken));
+    setHeard(true);
   }
 
   return (
@@ -97,7 +103,10 @@ export default function QuickAdd({
         <input
           ref={inputRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setHeard(false);
+          }}
           placeholder={
             // One short example in the language the user speaks: two did not
             // fit a phone-width box.
@@ -116,21 +125,28 @@ export default function QuickAdd({
           control={voice}
           onStart={() => {
             spokenBase.current = text;
+            setHeard(false);
             setVoiceError(null);
           }}
           onText={(spoken) => setText(mergeTranscript(spokenBase.current, spoken))}
-          onFinal={addSpoken}
+          onFinal={showSpoken}
           onError={setVoiceError}
           onListeningChange={setListening}
         />
-        <button type="submit" disabled={!text.trim() || busy}>
+        <button type="submit" disabled={!text.trim() || busy || listening}>
           {busy ? 'Saving…' : 'Add'}
         </button>
       </div>
 
       {listening && (
         <p className="listening-hint" aria-live="polite">
-          Listening… stop talking and it is added. Tap the mic to finish sooner.
+          Listening… stop talking when you are done, or tap the mic.
+        </p>
+      )}
+
+      {heard && !listening && text.trim() && (
+        <p className="heard-hint" aria-live="polite">
+          Check the text — fix anything misheard — then tap Add.
         </p>
       )}
 

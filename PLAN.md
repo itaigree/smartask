@@ -121,6 +121,20 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-06 — Voice: review before adding, at the user's request.**
+
+Auto-adding on end of speech was reverted to a review step: speech fills the
+box, the user checks or corrects it, and taps Add. Everything else from the
+previous change stays — `voice-session.ts` still ends the session when speech
+stops, guarantees the complete final transcript, and lets nothing late through.
+
+The one new rule is what keeps the old race closed: **Add is disabled while
+listening**, and a keyboard Enter is ignored then too. Interim words are on
+screen while you speak, and an early tap is exactly what used to save a cut-off
+task and then refill the box. Add becomes available the moment the mic stops,
+and what is in the box at that point is what is saved. A reminder under the box
+asks the user to check the text; it disappears once they edit it.
+
 **2026-11-06 — Voice is hands-free; fixes a voice race that cut tasks short.**
 
 Requested: add the task when the user stops talking, and leave the box empty
