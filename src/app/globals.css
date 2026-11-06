@@ -647,3 +647,26 @@ button { cursor: pointer; }
   border-radius: 8px;
   padding: 7px 10px;
 }
+
+/* ---------------- storage choice ---------------- */
+
+.choices { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+
+.choice {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 15px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.choice:hover { border-color: var(--accent); background: var(--accent-soft); }
+.choice-icon { font-size: 24px; line-height: 1; }
+.choice-body { display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; color: var(--muted); }
+.choice-body strong { font-size: 15.5px; color: var(--text); }
+.choice-note { color: var(--accent); font-weight: 600; }
+
+.local-footer .note { text-align: center; }

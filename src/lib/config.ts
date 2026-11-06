@@ -15,6 +15,7 @@ export interface NotionConfig {
 
 const STORAGE_KEY = 'smartask.notion.v1';
 const GEMINI_KEY = 'smartask.gemini.v1';
+const STORAGE_MODE_KEY = 'smartask.storage.v1';
 
 /** Accepts a bare id or any Notion URL containing one; returns a dashed uuid. */
 export function normalizeDatabaseId(raw: string): string | null {
@@ -125,4 +126,46 @@ export function validateApiKey(raw: string): string | null {
   const key = String(raw ?? '').trim();
   if (!key || /\s/.test(key) || key.length < 20) return null;
   return key;
+}
+
+/* ------------------------------------------------------------------ *
+ * Storage mode
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which store the app uses:
+ *
+ * - Notion credentials saved     -> Notion. Checked first, so anyone already
+ *   connected keeps exactly the app they had; this flag never overrides them.
+ * - this flag says 'local'       -> tasks kept on this device only.
+ * - neither                      -> first launch: ask.
+ */
+export type StorageMode = 'notion' | 'local';
+
+export function resolveStorageMode(
+  notion: NotionConfig | null,
+  localChosen: boolean,
+): StorageMode | null {
+  if (notion) return 'notion';
+  if (localChosen) return 'local';
+  return null;
+}
+
+export function loadLocalChosen(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(STORAGE_MODE_KEY) === 'local';
+  } catch {
+    return false;
+  }
+}
+
+export function setLocalChosen(chosen: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (chosen) window.localStorage.setItem(STORAGE_MODE_KEY, 'local');
+    else window.localStorage.removeItem(STORAGE_MODE_KEY);
+  } catch {
+    // Without storage the app simply asks again next launch.
+  }
 }

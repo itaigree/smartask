@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { NotionConfig } from '../lib/config.ts';
 import { maskToken } from '../lib/config.ts';
+import { ValidationError } from '../lib/capture.ts';
+import { LocalStoreError } from '../lib/local-store.ts';
 import { describeNotionError } from '../lib/notion.ts';
 import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
@@ -25,20 +26,30 @@ const RETURN_REFRESH_MIN_MS = 10_000;
  */
 export default function TaskBoard({
   repo,
-  config,
+  storage,
   aiEnabled,
   classify,
-  onDisconnect,
+  onLeave,
   onOpenAi,
 }: {
   repo: TaskRepository;
-  config: NotionConfig;
+  /** Where tasks live; changes wording, and whether there is anything to re-read. */
+  storage: { kind: 'notion'; token: string } | { kind: 'local' };
   aiEnabled: boolean;
   /** Direct Gemini call that throws on failure; null when AI is off. */
   classify: ((input: RuleInput) => Promise<CategorySignal>) | null;
-  onDisconnect: () => void;
+  /** Leave this store for the first-launch choice. Never deletes tasks. */
+  onLeave: () => void;
   onOpenAi: () => void;
 }) {
+  const isLocal = storage.kind === 'local';
+
+  /** Local errors already read well; Notion's need translating. */
+  const describeError = (e: unknown) =>
+    e instanceof LocalStoreError || e instanceof ValidationError
+      ? e.message
+      : describeNotionError(e);
+
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [view, setView] = useState<ViewId>('focus');
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +80,7 @@ export default function TaskBoard({
         setTasks(loaded);
         setError(null);
       } catch (e) {
-        setError(describeNotionError(e));
+        setError(describeError(e));
         setTasks((current) => current ?? []);
       }
     },
@@ -96,7 +107,7 @@ export default function TaskBoard({
         setError(null);
         return task;
       } catch (e) {
-        setError(describeNotionError(e));
+        setError(describeError(e));
         return null;
       } finally {
         setCreating(false);
@@ -119,7 +130,7 @@ export default function TaskBoard({
         setError(null);
       } catch (e) {
         setTasks(previous);
-        setError(describeNotionError(e));
+        setError(describeError(e));
       }
     },
     [repo, tasks],
@@ -134,7 +145,7 @@ export default function TaskBoard({
         setError(null);
       } catch (e) {
         setTasks(previous);
-        setError(describeNotionError(e));
+        setError(describeError(e));
       }
     },
     [repo, tasks],
@@ -194,6 +205,8 @@ export default function TaskBoard({
     const allow = createThrottle(RETURN_REFRESH_MIN_MS);
     allow(); // the initial load counts as the first read
 
+    if (isLocal) return; // nothing outside this device can change local tasks
+
     const onReturn = () => {
       if (document.visibilityState !== 'visible' || busyRef.current) return;
       if (!allow()) return;
@@ -206,7 +219,7 @@ export default function TaskBoard({
       document.removeEventListener('visibilitychange', onReturn);
       window.removeEventListener('focus', onReturn);
     };
-  }, []);
+  }, [isLocal]);
 
   return (
     <>
@@ -226,29 +239,31 @@ export default function TaskBoard({
             >
               {aiEnabled ? '✦ AI on' : '✦ AI'}
             </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={refresh}
-              disabled={refreshing}
-              title="Re-read from Notion"
-            >
-              {refreshing ? '…' : '↻'}
-            </button>
+            {!isLocal && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={refresh}
+                disabled={refreshing}
+                title="Re-read from Notion"
+              >
+                {refreshing ? '…' : '↻'}
+              </button>
+            )}
             <button
               type="button"
               className="icon-button"
               onClick={() => {
-                if (
-                  confirm(
-                    `Forget the Notion token ${maskToken(config.token)} on this device?\n\n` +
-                      'Your tasks stay in Notion. You will need to paste the token again.',
-                  )
-                ) {
-                  onDisconnect();
-                }
+                const message =
+                  storage.kind === 'notion'
+                    ? `Forget the Notion token ${maskToken(storage.token)} on this device?\n\n` +
+                      'Your tasks stay in Notion. You will need to paste the token again.'
+                    : 'Switch away from phone-only storage?\n\n' +
+                      'Your tasks stay saved on this device and come back if you choose ' +
+                      'phone-only again.';
+                if (confirm(message)) onLeave();
               }}
-              title="Forget the token on this device"
+              title={isLocal ? 'Change where tasks are stored' : 'Forget the token on this device'}
             >
               ⏻
             </button>
@@ -323,6 +338,7 @@ export default function TaskBoard({
                   task={task}
                   now={now}
                   hideCategory={view === 'categories'}
+                  localOnly={isLocal}
                   onToggle={toggle}
                   onDelete={remove}
                 />

@@ -116,9 +116,46 @@ Later phases must not violate these:
 - [x] Phase 11: Static build & GitHub Pages deploy — `output: 'export'`, basePath, `.github/workflows/deploy.yml` — Done when: `next build` emits `out/` and pushing to `main` publishes the site.
 - [x] Phase 12: Dates in any language — Gemini returns a due date and a date-free title; the local parser's date always wins, the AI's only fills the gap — Done when: "לשלם חשבון חשמל מחר" saves as Finance, due tomorrow, titled "לשלם חשבון חשמל".
 - [x] Phase 13: Voice input — browser speech recognition, Hebrew or English, transcript into the capture box for review — Done when: speaking a task fills the box and Add saves it; where the browser cannot, the user is pointed at the keyboard's dictation key.
+- [x] Phase 14: Phone-only mode — tasks kept in the browser with no account; Notion becomes optional; backup and restore — Done when: a new user can choose "On this phone only" and use every feature with zero Notion requests, and a user with saved Notion credentials sees no change.
 - [x] Phase 8: AI categorizer — `categorize/gemini.ts` behind a user-supplied Google AI Studio key — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works. **Built with Gemini rather than Claude at the user's request; the `Categorizer` seam took it unchanged.**
 
 ## Status log
+
+**2026-11-06 — Phase 14: phone-only mode; Notion becomes optional.**
+
+The user asked that new users not need a Notion account, without changing
+their own Notion setup.
+
+`local-store.ts` implements the same `TaskRepository` interface as the Notion
+store, so the board, capture, Gemini sorting, Hebrew dates and voice run on
+either unchanged. Tasks live in `localStorage` under their own key.
+
+**Existing users are protected by precedence, not by a migration.**
+`resolveStorageMode` checks saved Notion credentials first, so anyone already
+connected goes straight to their board as before; a leftover phone-only flag
+cannot override them. The end-to-end run checks this explicitly: no choice
+screen, Notion queried, refresh and open-in-Notion links still present.
+
+A first launch with nothing saved now asks where tasks should live. Phone-only
+mode makes zero Notion requests, hides the Notion refresh and links, and words
+deletion as permanent — there is no trash to recover from.
+
+The cost of phone-only is that the tasks exist in one browser on one device.
+Two mitigations:
+
+- `navigator.storage.persist()` is requested on entering phone-only mode,
+  asking the browser not to evict the data. Android grants this readily for an
+  installed app; a refusal is silent and just makes backups matter more.
+- **Back up / Restore** sits under the board: a JSON file, restored by merging
+  on task id, so restoring twice adds nothing and an old backup never deletes
+  newer tasks.
+
+Switching stores never deletes anything. Leaving phone-only returns to the
+choice screen, which shows how many tasks are waiting on the device.
+
+Not built: moving phone-only tasks into Notion when someone connects later.
+They stay on the device and reappear if phone-only is chosen again, but they
+are not uploaded.
 
 **2026-11-06 — Phases 12-13: Hebrew dates through Gemini, and voice input.**
 

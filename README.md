@@ -8,13 +8,17 @@ out the due date, the priority, the project and the tags, works out that it is a
 those tasks back and shows them in views worth looking at — what to do *now*,
 what is due today, what is coming — instead of one flat list.
 
-Notion is the database. There is no second store to host or back up, and you
-can edit any task in Notion itself and see the change in the app.
+Your tasks live in one of two places — you choose on first launch:
 
-**There is no server.** The app is a static site on GitHub Pages. You paste your
-Notion token into it once, it is kept in your browser on your own device, and
-your browser talks to Notion directly. Nothing is stored anywhere else and
-nothing passes through a third party.
+- **On this phone only.** Nothing to set up and no account. Tasks are kept in
+  the browser on that device, with a backup file you can download and restore.
+- **In Notion.** Tasks go into a Notion database you own, so you can see and
+  edit them in Notion on any device.
+
+**There is no server either way.** The app is a static site on GitHub Pages.
+Any token you give it is kept in your browser on your own device, and your
+browser talks to Notion and Gemini directly. Nothing passes through a third
+party.
 
 ## What the capture box understands
 
@@ -53,6 +57,20 @@ Everything is editable in Notion afterwards; it is a normal database.
 
 ## Setup
 
+### Phone only
+
+Open the app and choose **On this phone only**. That is the whole setup.
+
+Then, from the browser menu, **Add to Home screen** (Android) or **Share → Add
+to Home Screen** (iPhone) for an icon and a full-screen window.
+
+Because the tasks live in that one browser, use **Back up** at the bottom of
+the board now and then, and keep the file somewhere other than the phone.
+**Restore** merges a backup back in — restoring twice adds nothing, and an old
+backup never deletes newer tasks.
+
+### With Notion
+
 You need a free Notion account. No Node.js, no terminal, no hosting account.
 
 ### 1. Create a Notion integration
@@ -86,7 +104,8 @@ re-run the failed workflow.
 
 ### 5. Open it and connect
 
-Open that URL, paste the token and the database link, press **Connect**. On a
+Open that URL, choose **Sync with Notion**, paste the token and the database
+link, press **Connect**. On a
 phone, use **Add to Home Screen** (iOS) or **Install app** (Android) to get an
 icon and a full-screen window.
 
@@ -274,6 +293,9 @@ with no page access looks exactly like a wrong id.
   while the app sits unused. If a new task does not show in Notion, that is
   Notion's own view not redrawing: pull down to refresh on a phone, or reload.
 - **Not in v1:** recurring tasks, reminders, multiple users.
+- **Switching storage never deletes anything.** The ⏻ button returns you to the
+  choice screen. Phone-only tasks stay on the device and come back if you pick
+  phone-only again; they are not copied into Notion.
 - **Each browser connects separately.** The token lives on one device, so a
   phone and a laptop each need it pasted once. The tasks are shared because
   Notion holds them; only the credential is per-device.

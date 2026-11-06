@@ -8,7 +8,14 @@ import { normalizeDatabaseId, saveConfig, validateToken, type NotionConfig } fro
  * browser. It says plainly where they are stored, because the honest answer is
  * "on your device, readable by anything else on this domain".
  */
-export default function ConnectForm({ onConnected }: { onConnected: (c: NotionConfig) => void }) {
+export default function ConnectForm({
+  onConnected,
+  onBack,
+}: {
+  onConnected: (c: NotionConfig) => void;
+  /** Return to the storage choice, for someone who would rather not use Notion. */
+  onBack?: () => void;
+}) {
   const [token, setToken] = useState('');
   const [databaseId, setDatabaseId] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +50,14 @@ export default function ConnectForm({ onConnected }: { onConnected: (c: NotionCo
 
   return (
     <div className="setup">
-      <h2>Connect your Notion</h2>
+      <div className="panel-head">
+        <h2>Connect your Notion</h2>
+        {onBack && (
+          <button type="button" className="icon-button" onClick={onBack}>
+            back
+          </button>
+        )}
+      </div>
       <p>
         SmartTask keeps every task in your own Notion database. Nothing is stored anywhere
         else, and there is no server in between.

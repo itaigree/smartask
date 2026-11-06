@@ -9,6 +9,7 @@ export default function TaskCard({
   task,
   now,
   hideCategory = false,
+  localOnly = false,
   onToggle,
   onDelete,
 }: {
@@ -16,6 +17,8 @@ export default function TaskCard({
   now: Date;
   /** Suppressed in the All view, where the group heading already says it. */
   hideCategory?: boolean;
+  /** Phone-only tasks have no trash to recover from, so the warning is stronger. */
+  localOnly?: boolean;
   onToggle: (task: Task) => Promise<void>;
   onDelete: (task: Task) => Promise<void>;
 }) {
@@ -84,11 +87,14 @@ export default function TaskCard({
         <button
           type="button"
           className="ghost-button danger"
-          title="Move to Notion trash"
+          title={localOnly ? 'Delete' : 'Move to Notion trash'}
           aria-label={`Delete ${task.title}`}
           disabled={busy}
           onClick={() => {
-            if (confirm(`Move "${task.title}" to the Notion trash?`)) {
+            const question = localOnly
+              ? `Delete "${task.title}"? It is only on this device, so this cannot be undone.`
+              : `Move "${task.title}" to the Notion trash?`;
+            if (confirm(question)) {
               void run(() => onDelete(task));
             }
           }}
