@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { NotionConfig } from '../lib/config.ts';
 import { maskToken } from '../lib/config.ts';
 import { describeNotionError } from '../lib/notion.ts';
+import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
+import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
 import type { Task } from '../lib/types.ts';
 import { buildView, countTasks, type ViewId } from '../lib/views.ts';
@@ -20,12 +22,15 @@ export default function TaskBoard({
   repo,
   config,
   aiEnabled,
+  classify,
   onDisconnect,
   onOpenAi,
 }: {
   repo: TaskRepository;
   config: NotionConfig;
   aiEnabled: boolean;
+  /** Direct Gemini call that throws on failure; null when AI is off. */
+  classify: ((input: RuleInput) => Promise<CategorySignal>) | null;
   onDisconnect: () => void;
   onOpenAi: () => void;
 }) {
@@ -34,6 +39,12 @@ export default function TaskBoard({
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  /** What happened to the last capture — who filed it, and why if it fell back. */
+  const [lastCapture, setLastCapture] = useState<{ title: string; signal: CategorySignal } | null>(
+    null,
+  );
+  const [sorting, setSorting] = useState<SortProgress | null>(null);
+  const [sortNote, setSortNote] = useState<string | null>(null);
 
   /**
    * Views depend on the local date, which is only knowable in the browser, so
@@ -74,8 +85,9 @@ export default function TaskBoard({
     async (text: string): Promise<Task | null> => {
       setCreating(true);
       try {
-        const task = await repo.captureTask(text);
+        const { task, signal } = await repo.captureTask(text);
         setTasks((current) => [task, ...(current ?? [])]);
+        setLastCapture({ title: task.title, signal });
         setError(null);
         return task;
       } catch (e) {
@@ -123,6 +135,35 @@ export default function TaskBoard({
     [repo, tasks],
   );
 
+  const inbox = useMemo(() => (tasks ? inboxTasks(tasks) : []), [tasks]);
+
+  const sortWithAi = useCallback(async () => {
+    if (!classify || !tasks || sorting) return;
+    setSortNote(null);
+    setSorting({ done: 0, total: inboxTasks(tasks).length, changed: 0 });
+
+    const outcome = await sortInbox(
+      tasks,
+      classify,
+      (task, category) => repo.updateTask(task.id, { category }),
+      {
+        onProgress: setSorting,
+        onUpdated: (saved) =>
+          setTasks((current) => (current ?? []).map((t) => (t.id === saved.id ? saved : t))),
+      },
+    );
+
+    setSorting(null);
+    const moved = `Moved ${outcome.changed} of ${outcome.total} out of Inbox.`;
+    setSortNote(
+      outcome.stoppedReason
+        ? `${moved} Stopped early: ${outcome.stoppedReason} Run it again in a minute to continue.`
+        : outcome.changed < outcome.total
+          ? `${moved} Gemini could not place the rest — they are genuinely ambiguous.`
+          : moved,
+    );
+  }, [classify, tasks, sorting, repo]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     setNow(new Date());
@@ -146,7 +187,7 @@ export default function TaskBoard({
               title={aiEnabled ? 'Gemini is classifying tasks' : 'Turn on AI classification'}
               aria-label="AI classification settings"
             >
-              ✦
+              {aiEnabled ? '✦ AI on' : '✦ AI'}
             </button>
             <button
               type="button"
@@ -179,6 +220,37 @@ export default function TaskBoard({
       </header>
 
       <QuickAdd onCreate={create} busy={creating} aiEnabled={aiEnabled} />
+
+      {lastCapture && (
+        <CaptureNote
+          title={lastCapture.title}
+          signal={lastCapture.signal}
+          aiEnabled={aiEnabled}
+          onOpenAi={onOpenAi}
+          onDismiss={() => setLastCapture(null)}
+        />
+      )}
+
+      {inbox.length > 0 && (aiEnabled || sortNote) && (
+        <div className="inbox-bar">
+          {sorting ? (
+            <span>
+              ✦ Sorting… {sorting.done} of {sorting.total}
+            </span>
+          ) : sortNote ? (
+            <span>{sortNote}</span>
+          ) : (
+            <span>
+              {inbox.length} {inbox.length === 1 ? 'task' : 'tasks'} in Inbox
+            </span>
+          )}
+          {aiEnabled && !sorting && (
+            <button type="button" className="icon-button on" onClick={() => void sortWithAi()}>
+              ✦ Sort with Gemini
+            </button>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="banner" role="alert">
@@ -222,5 +294,70 @@ export default function TaskBoard({
         ))
       )}
     </>
+  );
+}
+
+/**
+ * One line under the capture box saying who filed the last task and where.
+ * Without this, "Inbox from Gemini" and "Inbox because Gemini failed" look
+ * identical — which is exactly the confusion it exists to prevent.
+ */
+function CaptureNote({
+  title,
+  signal,
+  aiEnabled,
+  onOpenAi,
+  onDismiss,
+}: {
+  title: string;
+  signal: CategorySignal;
+  aiEnabled: boolean;
+  onOpenAi: () => void;
+  onDismiss: () => void;
+}) {
+  let body: React.ReactNode;
+  let tone = 'ok';
+
+  if (signal.source === 'gemini') {
+    body = (
+      <>
+        ✦ Gemini filed <strong>{title}</strong> under <strong>{signal.category}</strong>
+        {signal.reason ? ` — ${signal.reason}` : ''}
+      </>
+    );
+  } else if (signal.fallbackReason) {
+    tone = 'bad';
+    body = (
+      <>
+        Gemini failed, so keyword rules filed this under <strong>{signal.category}</strong>.{' '}
+        {signal.fallbackReason}
+      </>
+    );
+  } else if (signal.category === 'Inbox' && !aiEnabled) {
+    tone = 'hint';
+    body = (
+      <>
+        Filed in Inbox — the keyword rules only understand English.{' '}
+        <button type="button" className="link-button" onClick={onOpenAi}>
+          Turn on ✦ AI
+        </button>{' '}
+        to sort tasks in any language.
+      </>
+    );
+  } else {
+    body = (
+      <>
+        Filed under <strong>{signal.category}</strong> by keyword rules ({signal.reason}).
+      </>
+    );
+  }
+
+  return (
+    <div className={`capture-note ${tone}`} role="status">
+      <span>{body}</span>
+      <button type="button" className="ghost-button" onClick={onDismiss} aria-label="Dismiss">
+        ✕
+      </button>
+    </div>
   );
 }

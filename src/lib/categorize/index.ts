@@ -6,6 +6,13 @@ export interface CategorySignal {
   /** 0–1. Low confidence is what a future UI would use to ask for a confirmation. */
   confidence: number;
   reason: string;
+  /**
+   * Which classifier actually produced this answer. The UI shows it, because
+   * "Inbox from Gemini" and "Inbox because Gemini failed" need different fixes.
+   */
+  source?: 'rules' | 'gemini';
+  /** Set when an AI classifier was tried and the rules answered instead. */
+  fallbackReason?: string;
 }
 
 /**

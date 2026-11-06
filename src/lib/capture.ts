@@ -1,4 +1,4 @@
-import { getCategorizer, type Categorizer } from './categorize/index.ts';
+import { getCategorizer, type Categorizer, type CategorySignal } from './categorize/index.ts';
 import { parseTask } from './parse.ts';
 import type { NewTask } from './types.ts';
 
@@ -31,23 +31,23 @@ export function validateText(text: string): string {
  * The categorizer is injected, so keyword rules and Gemini are interchangeable
  * and neither is baked into this pipeline.
  */
-export async function draftFromText(
+export async function captureDraft(
   text: string,
   now: Date = new Date(),
   categorizer: Categorizer = getCategorizer(),
-): Promise<NewTask> {
+): Promise<{ draft: NewTask; signal: CategorySignal }> {
   const parsed = parseTask(validateText(text), now);
 
-  const { category } = await categorizer.categorize({
+  const signal = await categorizer.categorize({
     title: parsed.title,
     note: parsed.note,
     project: parsed.project,
     tags: parsed.tags,
   });
 
-  return {
+  const draft: NewTask = {
     title: parsed.title,
-    category,
+    category: signal.category,
     priority: parsed.priority,
     status: 'Todo',
     due: parsed.due,
@@ -55,4 +55,15 @@ export async function draftFromText(
     tags: parsed.tags,
     note: parsed.note,
   };
+
+  return { draft, signal };
+}
+
+/** The draft alone, for callers that do not care who classified it. */
+export async function draftFromText(
+  text: string,
+  now: Date = new Date(),
+  categorizer: Categorizer = getCategorizer(),
+): Promise<NewTask> {
+  return (await captureDraft(text, now, categorizer)).draft;
 }

@@ -118,6 +118,46 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-06 — Fix: every task landing in Inbox.**
+
+Reported by the user after connecting Notion and Gemini. Diagnosed by reading
+the live Notion database: both captured tasks were **Hebrew** and both were
+`Inbox`. Five compounding causes, all fixed:
+
+1. **The keyword rules are English-only**, so every Hebrew task scored zero.
+   Left as is — Gemini is the real answer — but the UI now says so instead of
+   silently filing to Inbox.
+2. **The Gemini prompt never mentioned other languages and explicitly
+   sanctioned Inbox for "vague" tasks.** Short tasks are the normal case, so it
+   was invited to give up. The prompt now says tasks may be Hebrew, includes
+   Hebrew worked examples, describes academic work under Work, and makes Inbox a
+   stated last resort.
+3. **The Gemini-failure notice rendered below the whole task list**, invisible
+   on a phone. Removed; failures now show directly under the capture box.
+4. **The live preview always showed the English-only rules guess** — "Inbox"
+   for every Hebrew task even with Gemini on. With AI on it now says Gemini will
+   decide.
+5. **Nothing said who filed a task.** `CategorySignal` now carries `source` and
+   `fallbackReason`, and a line under the capture box says whether Gemini or the
+   rules decided, and why if Gemini failed.
+
+Added **Sort with Gemini** for tasks already stuck in Inbox (`recategorize.ts`):
+sequential with a gap for the free tier, stops on the first error with its
+reason rather than hammering a refusing API, and never overwrites a task with a
+fallback answer. Card titles, notes and the input use `dir="auto"` so Hebrew
+reads right-to-left.
+
+Verified end to end in the built app with Notion and Gemini intercepted at the
+network layer: a Hebrew capture reaches Gemini intact, the key travels in a
+header and not the URL, Notion receives Gemini's category, the two real Inbox
+tasks re-sort, and a 429 still saves the task and explains itself near the top
+of the screen. **Not verified: what the real Gemini decides** — the intercepted
+Gemini answered with categories I chose. The plumbing is proven; the judgement
+is not.
+
+Known gap, not addressed: the date parser is English-only, so "מחר" (tomorrow)
+is not recognised and Hebrew tasks get no due date.
+
 **2026-11-05 — Phase 8: Gemini classification.**
 
 The user asked for AI classification with a Google key stored the same way as

@@ -1,6 +1,6 @@
 import type { Client } from '@notionhq/client';
-import { draftFromText, ValidationError } from './capture.ts';
-import { getCategorizer, type Categorizer } from './categorize/index.ts';
+import { captureDraft, draftFromText, ValidationError } from './capture.ts';
+import { getCategorizer, type Categorizer, type CategorySignal } from './categorize/index.ts';
 import { cached, invalidate, DEFAULT_TTL_MS } from './cache.ts';
 import type { NotionConfig } from './config.ts';
 import {
@@ -19,9 +19,15 @@ const PAGE_SIZE = 100;
 /** Enough for a personal backlog; stops a runaway loop against a huge database. */
 const MAX_PAGES = 20;
 
+export interface CaptureResult {
+  task: Task;
+  /** Who filed it and why — shown to the user straight after capture. */
+  signal: CategorySignal;
+}
+
 export interface TaskRepository {
   listTasks(options?: { fresh?: boolean }): Promise<Task[]>;
-  captureTask(text: string, now?: Date): Promise<Task>;
+  captureTask(text: string, now?: Date): Promise<CaptureResult>;
   createTask(draft: NewTask): Promise<Task>;
   updateTask(id: string, patch: TaskPatch): Promise<Task>;
   archiveTask(id: string): Promise<void>;
@@ -82,7 +88,8 @@ export function createTaskRepository(
     },
 
     async captureTask(text, now = new Date()) {
-      return createTask(await draftFromText(text, now, categorizer));
+      const { draft, signal } = await captureDraft(text, now, categorizer);
+      return { task: await createTask(draft), signal };
     },
 
     createTask,

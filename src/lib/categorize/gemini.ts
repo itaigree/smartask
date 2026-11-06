@@ -23,22 +23,44 @@ export interface GeminiSettings {
 
 /** What each category means, so the model files tasks the way the app's views expect. */
 const CATEGORY_GUIDE: Record<Category, string> = {
-  Work: 'paid work, clients, colleagues, meetings, deadlines, work projects',
-  Personal: 'friends and family, social plans, gifts, travel, personal admin',
+  Work:
+    'a job or an academic career: research, lab, thesis, papers, grants, ethics ' +
+    'approvals, supervisors, colleagues, clients, meetings, deadlines, work email',
+  Personal: 'friends and family, social plans, gifts, travel, personal messages and calls',
   Errands: 'short trips and pickups: shops, post, deliveries, laundry, fuel',
   Health: 'doctors, dentists, medication, fitness, mental health, appointments',
   Finance: 'money: bills, rent, tax, banking, insurance, invoices, budgeting',
-  Learning: 'studying, courses, reading, research, exams, practising a skill',
+  Learning: 'courses, studying, exams, homework, reading to learn, practising a skill',
   Home: 'the home itself: repairs, cleaning, furniture, garden, utilities setup',
-  Inbox: 'only when the task is too vague or ambiguous to place anywhere else',
+  Inbox: 'LAST RESORT: only when there is genuinely no clue at all what the task is about',
 };
+
+/**
+ * Worked examples, deliberately including Hebrew. Short, terse tasks in any
+ * language are the normal case, not an edge case — the model should commit to
+ * its best guess rather than fall back to Inbox.
+ */
+const EXAMPLES: Array<[string, Category]> = [
+  ['לשלם חשבון חשמל', 'Finance'],
+  ['לקבוע תור לרופאת שיניים', 'Health'],
+  ['להגיש טופס לוועדת אתיקה', 'Work'],
+  ['להתקשר לאמא', 'Personal'],
+  ['email the supervisor about the draft', 'Work'],
+  ['buy milk', 'Errands'],
+];
 
 export function buildPrompt(input: RuleInput): string {
   const lines = [
     'Classify this personal task into exactly one category.',
     '',
+    'The task may be written in any language — often Hebrew — and is usually short.',
+    'Classify it by meaning. Always answer with the English category name.',
+    '',
     'Categories:',
     ...CATEGORIES.map((c) => `- ${c}: ${CATEGORY_GUIDE[c]}`),
+    '',
+    'Examples:',
+    ...EXAMPLES.map(([task, category]) => `${JSON.stringify(task)} -> ${category}`),
     '',
     `Task: ${JSON.stringify(input.title)}`,
   ];
@@ -51,6 +73,9 @@ export function buildPrompt(input: RuleInput): string {
     '',
     'Judge by what the task is actually about, not by single keywords.',
     '"Pay the electricity bill" is Finance even if it concerns the home.',
+    'Commit to the most likely category even when the task is terse. A task to',
+    'write to or call a named person is Personal unless it is clearly about work.',
+    'Do not choose Inbox just because the task is short.',
     '',
     'Reply with only a JSON object, no prose and no code fence:',
     '{"category": "<one category from the list>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}',
@@ -257,7 +282,7 @@ export async function classifyWithGemini(
 
   const signal = parseGeminiReply(extractText(body));
   if (!signal) throw new GeminiError('Gemini replied with no usable category.');
-  return signal;
+  return { ...signal, source: 'gemini' };
 }
 
 /**
@@ -275,8 +300,10 @@ export function createGeminiCategorizer(
       try {
         return await classifyWithGemini(settings, input);
       } catch (error) {
-        onError?.(error instanceof Error ? error.message : 'Gemini request failed.');
-        return fallback.categorize(input);
+        const reason = error instanceof Error ? error.message : 'Gemini request failed.';
+        onError?.(reason);
+        const signal = await fallback.categorize(input);
+        return { ...signal, source: 'rules', fallbackReason: reason };
       }
     },
   };

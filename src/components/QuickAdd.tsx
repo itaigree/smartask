@@ -59,6 +59,7 @@ export default function QuickAdd({
           onChange={(e) => setText(e.target.value)}
           placeholder="Pay rent friday !! #home @bills"
           aria-label="New task"
+          dir="auto"
           autoComplete="off"
           enterKeyHint="done"
         />
@@ -69,12 +70,16 @@ export default function QuickAdd({
 
       {preview ? (
         <div className="preview" aria-live="polite">
-          <span className="preview-label">{aiEnabled ? 'Saving as' : 'Will save as'}</span>
-          <CategoryChip category={preview.category} />
-          {aiEnabled && (
-            <span className="chip ai" title="Gemini confirms the category when you add it">
-              ✦ Gemini decides
+          <span className="preview-label">Will save as</span>
+          {aiEnabled ? (
+            // The live guess comes from English-only keyword rules; showing it
+            // here would put "Inbox" on every Hebrew task even though Gemini,
+            // not the rules, makes the call when the task is added.
+            <span className="chip ai" title="Gemini picks the category when you add it">
+              ✦ Gemini will categorize
             </span>
+          ) : (
+            <CategoryChip category={preview.category} />
           )}
           <PriorityChip priority={preview.parsed.priority} />
           {preview.parsed.due && (

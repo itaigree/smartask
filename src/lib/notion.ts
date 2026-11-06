@@ -1,5 +1,6 @@
-// The Notion SDK is CommonJS; a named import works under a bundler but not in
-// Node's ESM loader, so the default import keeps both happy.
+// A named import: the bundler resolves it. (Node's own ESM loader cannot name-
+// import this CommonJS package, which is why unit tests import notion-mapping.ts
+// and never this file.)
 import { Client } from '@notionhq/client';
 import type { NotionConfig } from './config.ts';
 

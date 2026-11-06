@@ -548,3 +548,38 @@ button { cursor: pointer; }
 
 .note.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
 .note.bad { background: var(--danger-soft); color: var(--danger); }
+
+/* ---------------- capture feedback & inbox sort ---------------- */
+
+.capture-note,
+.inbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin: -4px 0 14px;
+}
+
+.capture-note.ok { background: var(--accent-soft); color: var(--text); }
+.capture-note.bad { background: var(--danger-soft); color: var(--danger); }
+.capture-note.hint { background: var(--surface-2); color: var(--muted); }
+
+.inbox-bar {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  color: var(--muted);
+}
+
+.inbox-bar .icon-button { white-space: nowrap; }
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+}

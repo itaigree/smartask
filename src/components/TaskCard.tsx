@@ -47,8 +47,15 @@ export default function TaskCard({
       </button>
 
       <div className="card-body">
-        <h3 className="card-title">{task.title}</h3>
-        {task.note && <p className="card-note">{task.note}</p>}
+        {/* dir="auto": a Hebrew title reads right-to-left, an English one left-to-right. */}
+        <h3 className="card-title" dir="auto">
+          {task.title}
+        </h3>
+        {task.note && (
+          <p className="card-note" dir="auto">
+            {task.note}
+          </p>
+        )}
 
         <div className="card-meta">
           {!hideCategory && <CategoryChip category={task.category} />}

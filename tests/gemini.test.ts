@@ -32,6 +32,24 @@ test('the prompt offers every category and the task itself', () => {
   assert.match(prompt, /bills/);
 });
 
+test('the prompt tells Gemini tasks may be Hebrew and to commit rather than say Inbox', () => {
+  const prompt = buildPrompt({ title: 'בקשה אתית' });
+  assert.match(prompt, /any language/i);
+  assert.match(prompt, /Hebrew/);
+  assert.match(prompt, /English category name/);
+  assert.match(prompt, /Inbox: LAST RESORT/);
+  assert.match(prompt, /Do not choose Inbox just because the task is short/);
+  assert.ok(prompt.includes('"בקשה אתית"'), 'the Hebrew task reaches the prompt intact');
+  assert.match(prompt, /-> Finance/, 'worked examples are included');
+});
+
+test('academic work is described under Work, so research admin lands there', () => {
+  const prompt = buildPrompt({ title: 'x' });
+  const work = prompt.split('\n').find((l) => l.startsWith('- Work:')) ?? '';
+  assert.match(work, /research/);
+  assert.match(work, /ethics/);
+});
+
 test('a clean JSON reply is parsed', () => {
   const signal = parseGeminiReply('{"category":"Finance","confidence":0.9,"reason":"a bill"}');
   assert.deepEqual(signal, { category: 'Finance', confidence: 0.9, reason: 'a bill' });
@@ -166,6 +184,9 @@ test('capture never breaks: any Gemini failure falls back to the rules', async (
   );
 
   assert.equal(signal.category, 'Finance', 'the keyword rules answered instead');
+  assert.equal(signal.source, 'rules');
+  assert.match(signal.fallbackReason ?? '', /Could not reach Gemini/,
+    'the fallback carries its reason so the UI can show it');
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Could not reach Gemini/);
 });
@@ -179,4 +200,16 @@ test('when Gemini answers, its verdict is used over the rules', async () => {
   );
   assert.equal(signal.category, 'Work');
   assert.equal(signal.reason, 'client bill');
+  assert.equal(signal.source, 'gemini');
+  assert.equal(signal.fallbackReason, undefined);
+});
+
+test('a Hebrew task Gemini classifies is filed by Gemini, not left in Inbox', async () => {
+  const categorizer = createGeminiCategorizer({ apiKey: 'k', model: 'm' }, rulesCategorizer);
+  const signal = await withFetch(
+    async () => jsonResponse(reply('{"category":"Work","confidence":0.85,"reason":"ethics committee request"}')),
+    () => categorizer.categorize({ title: 'בקשה אתית' }),
+  );
+  assert.equal(signal.category, 'Work');
+  assert.equal(signal.source, 'gemini');
 });

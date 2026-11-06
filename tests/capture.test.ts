@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { draftFromText, validateText, ValidationError, MAX_TASK_LENGTH } from '../src/lib/capture.ts';
+import { captureDraft, draftFromText, validateText, ValidationError, MAX_TASK_LENGTH } from '../src/lib/capture.ts';
 import { setCategorizer } from '../src/lib/categorize/index.ts';
 import { toISODate, addDays } from '../src/lib/parse.ts';
 
@@ -50,4 +50,22 @@ test('swapping the categorizer changes the category and nothing else', async () 
   } finally {
     setCategorizer(null);
   }
+});
+
+test('capture reports who classified the task, so the UI can say so', async () => {
+  const { draft, signal } = await captureDraft('pay rent tomorrow', NOW, {
+    name: 'stub',
+    async categorize() {
+      return { category: 'Finance', confidence: 0.9, reason: 'rent', source: 'gemini' };
+    },
+  });
+  assert.equal(draft.category, 'Finance');
+  assert.equal(signal.source, 'gemini');
+  assert.equal(signal.reason, 'rent');
+});
+
+test('the keyword rules mark their own answers', async () => {
+  const { signal } = await captureDraft('zzz qqq', NOW);
+  assert.equal(signal.source, 'rules');
+  assert.equal(signal.category, 'Inbox');
 });

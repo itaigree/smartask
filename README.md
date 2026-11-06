@@ -105,9 +105,15 @@ better at those and costs nothing.
   models your key can use and picks the cheapest suitable one. You can change it
   in the same panel, and **Test it** runs a real classification so you can see
   it work.
-- **Failures are invisible to your workflow.** If Gemini is slow, rate-limited
-  or down, the keyword rules answer and the task is still saved. You get a note,
-  not a lost task.
+- **Any language.** Gemini classifies by meaning, so Hebrew (or anything else)
+  works. The keyword rules are English-only, which is why they file non-English
+  tasks to Inbox when AI is off.
+- **You always see who decided.** After each capture, a line under the box says
+  whether Gemini or the keyword rules filed the task — and, if Gemini failed,
+  why. The task is saved either way; you get a note, never a lost task.
+- **Sort with Gemini** appears whenever open tasks sit in Inbox — tasks captured
+  before AI was on, or while it was failing. It works through them one at a
+  time, spaced out for the free tier, and stops with a reason if Gemini refuses.
 - **Restrict the key.** Unlike the Notion token, a Google API key can be locked
   to one website. In [Google Cloud
   credentials](https://console.cloud.google.com/apis/credentials), set an

@@ -97,7 +97,7 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
     .find((category): category is Category => Boolean(category));
 
   if (taggedCategory) {
-    return { category: taggedCategory, confidence: 1, reason: 'named by a tag' };
+    return { category: taggedCategory, confidence: 1, reason: 'named by a tag', source: 'rules' };
   }
 
   const haystack = [input.title, input.note ?? '', ...(input.tags ?? [])]
@@ -123,9 +123,11 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
     // happens to name a category, before giving up to Inbox.
     const projectCategory = BY_NAME.get((input.project ?? '').toLowerCase());
     if (projectCategory) {
-      return { category: projectCategory, confidence: 0.6, reason: 'named by the project' };
+      return {
+        category: projectCategory, confidence: 0.6, reason: 'named by the project', source: 'rules',
+      };
     }
-    return { category: 'Inbox', confidence: 0, reason: 'no keyword matched' };
+    return { category: 'Inbox', confidence: 0, reason: 'no keyword matched', source: 'rules' };
   }
 
   return {
@@ -133,6 +135,7 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
     // Two solid hits is already decisive; cap so rules never claim certainty.
     confidence: Math.min(0.9, 0.45 + best.score * 0.15),
     reason: `matched ${best.hits.slice(0, 3).join(', ')}`,
+    source: 'rules',
   };
 }
 
