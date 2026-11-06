@@ -121,6 +121,31 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-06 — Voice is hands-free; fixes a voice race that cut tasks short.**
+
+Requested: add the task when the user stops talking, and leave the box empty
+for the next one. Reproducing it first turned up a real bug. Android delivers
+its final recognition result a beat after speech ends. Tapping Add in that gap
+saved the *interim* text — "לשלם חשבון" instead of "לשלם חשבון חשמל" — cleared
+the box, and then the late final result wrote the full text back into it.
+
+`voice-session.ts` now owns a session's timing, framework-free and unit-tested
+with a hand-driven recognizer and clock:
+
+- **Speech ending adds the task**, with the complete final transcript, exactly
+  once. Whichever comes first ends it: the recognizer's own end-of-speech,
+  tapping the mic again, or a 2-second silence backstop for when Android keeps
+  listening after the user stops. The backstop restarts on every word, so a
+  pause mid-sentence is not cut off, and it never starts before any speech.
+- **A closed session lets nothing through.** Late results are ignored, so the
+  cleared box stays clear. Tapping Add mid-speech cancels the session for the
+  same reason.
+- **A failure part-way never auto-adds.** Whatever was heard stays in the box
+  to fix and add by hand.
+
+Verified in the built app with an Android-timed fake microphone across six
+scenarios, including the exact race above.
+
 **2026-11-06 — Phase 14: phone-only mode; Notion becomes optional.**
 
 The user asked that new users not need a Notion account, without changing

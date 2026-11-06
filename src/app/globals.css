@@ -670,3 +670,10 @@ button { cursor: pointer; }
 .choice-note { color: var(--accent); font-weight: 600; }
 
 .local-footer .note { text-align: center; }
+
+.listening-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+  font-weight: 550;
+}

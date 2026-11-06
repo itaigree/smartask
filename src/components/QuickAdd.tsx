@@ -9,7 +9,7 @@ import {
   loadSpeechLang, mergeTranscript, saveSpeechLang, SPEECH_LANGS, type SpeechLang,
 } from '../lib/speech.ts';
 import { CategoryChip, DueChip, PriorityChip, ProjectChip, TagChip } from './Chips.tsx';
-import VoiceButton from './VoiceButton.tsx';
+import VoiceButton, { type VoiceControl } from './VoiceButton.tsx';
 
 /**
  * The capture box. It parses as you type, so you can see what the app
@@ -30,6 +30,8 @@ export default function QuickAdd({
 
   // Voice: what was typed before speaking started, so speech is appended to it.
   const spokenBase = useRef('');
+  const voice = useRef<VoiceControl | null>(null);
+  const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [speechLang, setSpeechLang] = useState<SpeechLang>('en-US');
   useEffect(() => setSpeechLang(loadSpeechLang()), []);
@@ -57,16 +59,36 @@ export default function QuickAdd({
     return { parsed, category, daysAway };
   }, [text]);
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    const trimmed = text.trim();
-    if (!trimmed || busy) return;
+  /**
+   * The one way a task gets added, typed or spoken. On success the box is
+   * emptied, ready for the next one; on failure the text stays so nothing
+   * spoken or typed is lost.
+   */
+  async function add(raw: string): Promise<boolean> {
+    const trimmed = raw.trim();
+    if (!trimmed || busy) return false;
     const created = await onCreate(trimmed);
     if (created) {
       setText('');
       setVoiceError(null);
     }
+    return Boolean(created);
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    // Tapping Add mid-speech adds what is in the box now and drops the voice
+    // session, so a late recognition result cannot write it back afterwards.
+    voice.current?.cancel();
+    await add(text);
     inputRef.current?.focus();
+  }
+
+  /** Speech ended: add it straight away, hands-free. */
+  function addSpoken(spoken: string) {
+    const full = mergeTranscript(spokenBase.current, spoken);
+    setText(full); // visible while it saves, and kept if saving fails
+    void add(full);
   }
 
   return (
@@ -91,17 +113,26 @@ export default function QuickAdd({
         <VoiceButton
           lang={speechLang}
           disabled={busy}
+          control={voice}
           onStart={() => {
             spokenBase.current = text;
             setVoiceError(null);
           }}
           onText={(spoken) => setText(mergeTranscript(spokenBase.current, spoken))}
+          onFinal={addSpoken}
           onError={setVoiceError}
+          onListeningChange={setListening}
         />
         <button type="submit" disabled={!text.trim() || busy}>
           {busy ? 'Saving…' : 'Add'}
         </button>
       </div>
+
+      {listening && (
+        <p className="listening-hint" aria-live="polite">
+          Listening… stop talking and it is added. Tap the mic to finish sooner.
+        </p>
+      )}
 
       {voiceError && (
         <p className="voice-error" role="alert">
