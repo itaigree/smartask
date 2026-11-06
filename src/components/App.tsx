@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  clearConfig, loadConfig, loadGeminiConfig, loadLocalChosen, resolveStorageMode,
+  clearConfig, loadConfig, loadGeminiConfig, loadLocalChosen, notionDatabaseUrl, resolveStorageMode,
   setLocalChosen,
   type GeminiConfig, type NotionConfig,
 } from '../lib/config.ts';
@@ -163,7 +163,11 @@ export default function App() {
     <>
       <TaskBoard
         repo={repo}
-        storage={mode === 'notion' && config ? { kind: 'notion', token: config.token } : { kind: 'local' }}
+        storage={
+          mode === 'notion' && config
+            ? { kind: 'notion', token: config.token, databaseId: config.databaseId }
+            : { kind: 'local' }
+        }
         aiEnabled={Boolean(gemini)}
         classify={classify}
         onLeave={leave}
@@ -172,7 +176,12 @@ export default function App() {
         onCustomCategoriesChange={setCustomCategories}
       />
       {mode === 'notion' ? (
-        <p className="footer">Every task lives in your own Notion database.</p>
+        <p className="footer">
+          Every task lives in your own{' '}
+          <a href={config ? notionDatabaseUrl(config.databaseId) : '#'} target="_blank" rel="noreferrer">
+            Notion database ↗
+          </a>
+        </p>
       ) : (
         <LocalBackup onRestored={() => setRevision((r) => r + 1)} />
       )}

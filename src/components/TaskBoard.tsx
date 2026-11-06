@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { maskToken } from '../lib/config.ts';
+import { maskToken, notionDatabaseUrl } from '../lib/config.ts';
 import { ValidationError } from '../lib/capture.ts';
 import { LocalStoreError } from '../lib/local-store.ts';
 import { describeNotionError } from '../lib/notion.ts';
@@ -38,7 +38,7 @@ export default function TaskBoard({
 }: {
   repo: TaskRepository;
   /** Where tasks live; changes wording, and whether there is anything to re-read. */
-  storage: { kind: 'notion'; token: string } | { kind: 'local' };
+  storage: { kind: 'notion'; token: string; databaseId: string } | { kind: 'local' };
   aiEnabled: boolean;
   /** Direct Gemini call that throws on failure; null when AI is off. */
   classify: ((input: RuleInput) => Promise<CategorySignal>) | null;
@@ -289,7 +289,7 @@ export default function TaskBoard({
             Smart<span>Task</span>
           </h1>
           <div className="header-meta">
-            {counts && <span>{counts.open} open</span>}
+            {counts && <span className="open-count">{counts.open} open</span>}
             <button
               type="button"
               className={`icon-button${aiEnabled ? ' on' : ''}`}
@@ -299,6 +299,17 @@ export default function TaskBoard({
             >
               {aiEnabled ? '✦ AI on' : '✦ AI'}
             </button>
+            {storage.kind === 'notion' && (
+              <a
+                className="icon-button notion-link"
+                href={notionDatabaseUrl(storage.databaseId)}
+                target="_blank"
+                rel="noreferrer"
+                title="Open your tasks database in Notion"
+              >
+                Notion ↗
+              </a>
+            )}
             {!isLocal && (
               <button
                 type="button"

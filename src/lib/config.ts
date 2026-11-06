@@ -70,6 +70,14 @@ export function clearConfig(): void {
   }
 }
 
+/**
+ * A link to the user's tasks database in Notion. notion.so resolves any page or
+ * database by its id, and on a phone with Notion installed it opens the app.
+ */
+export function notionDatabaseUrl(databaseId: string): string {
+  return `https://www.notion.so/${databaseId.replace(/-/g, '')}`;
+}
+
 /** For display only — never render the whole token. */
 export function maskToken(token: string): string {
   if (token.length <= 10) return '••••';

@@ -46,3 +46,11 @@ test('with no browser present, config reads as absent rather than throwing', () 
   assert.equal(saveConfig({ token: 't', databaseId: 'd' }), false,
     'saving reports failure instead of throwing, so the UI can say so');
 });
+
+test('the Notion link points at the connected database, in the form notion.so resolves', async () => {
+  const { notionDatabaseUrl } = await import('../src/lib/config.ts');
+  assert.equal(
+    notionDatabaseUrl('0a8fbd62-49a9-48a7-a23a-68ee2e74e191'),
+    'https://www.notion.so/0a8fbd6249a948a7a23a68ee2e74e191',
+  );
+});

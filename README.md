@@ -279,6 +279,12 @@ types must match — the app reads properties by name.
 identical in the editor but is a different type over the API, and the app will
 not read it.
 
+## Opening Notion
+
+With Notion connected, **Notion ↗** at the top of the app — and the link in the
+footer — opens your tasks database. On a phone with the Notion app installed it
+opens there. Each task's own ↗ opens that one task.
+
 ## Troubleshooting
 
 The app shows Notion's failures in a red banner rather than breaking, so the
