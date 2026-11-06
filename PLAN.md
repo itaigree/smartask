@@ -114,9 +114,43 @@ Later phases must not violate these:
 - [x] Phase 9: Static data layer — `config.ts`, browser `notion.ts`, `tasks.ts` repository factory; API routes and `http.ts` deleted — Done when: `npm test` passes and nothing under `src/` reads `process.env` for Notion.
 - [x] Phase 10: Connect screen & client-side board — `App.tsx`, `ConnectForm.tsx`, `TaskBoard` loads through the repository — Done when: with no token the app shows a connect form, and saving one renders the board.
 - [x] Phase 11: Static build & GitHub Pages deploy — `output: 'export'`, basePath, `.github/workflows/deploy.yml` — Done when: `next build` emits `out/` and pushing to `main` publishes the site.
+- [x] Phase 12: Dates in any language — Gemini returns a due date and a date-free title; the local parser's date always wins, the AI's only fills the gap — Done when: "לשלם חשבון חשמל מחר" saves as Finance, due tomorrow, titled "לשלם חשבון חשמל".
+- [x] Phase 13: Voice input — browser speech recognition, Hebrew or English, transcript into the capture box for review — Done when: speaking a task fills the box and Add saves it; where the browser cannot, the user is pointed at the keyboard's dictation key.
 - [x] Phase 8: AI categorizer — `categorize/gemini.ts` behind a user-supplied Google AI Studio key — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works. **Built with Gemini rather than Claude at the user's request; the `Categorizer` seam took it unchanged.**
 
 ## Status log
+
+**2026-11-06 — Phases 12-13: Hebrew dates through Gemini, and voice input.**
+
+*Dates.* The same Gemini call that picks the category now returns `due` and a
+`title` with the date words removed. Two rules keep it honest:
+
+- **The local parser wins.** A date it found ("friday") is deterministic and
+  tested; an AI date only fills the gap when the parser found none — which in
+  practice means Hebrew.
+- **`sanitizeExtraction` checks everything.** The date must be real
+  (`2026-02-31` is refused) and plausible (a week overdue to three years
+  ahead). The title may only *remove* words — every word must already be in the
+  original — so a model that translates or rephrases is ignored and the user's
+  own words are kept.
+
+The prompt carries today's date and the next fourteen days written out with
+weekday names, because models are unreliable at weekday arithmetic and
+"ביום שלישי" cannot be answered without looking the date up.
+
+*Voice.* The browser's own speech recognition, not Gemini audio: free, no key,
+works with AI off, and words appear as you speak. Hebrew by default on a device
+that lists Hebrew, with a one-tap language toggle that persists. The transcript
+goes into the box for review; nothing saves until Add. Support is uneven —
+solid on Android Chrome, present in Safari, and known to fail in iPhone apps
+added to the home screen — so every failure names the cause and points at the
+keyboard's own dictation key, which works everywhere.
+
+Verified end to end with a simulated microphone and intercepted Gemini: words
+stream in while speaking, recognition runs in `he-IL`, the mic stops after a
+pause, and a refused recognizer explains itself. **Not verified on a real
+phone or microphone**, and the real Gemini's date judgements are untested —
+the intercepted one answered from the calendar in the prompt.
 
 **2026-11-06 — Fix: every task landing in Inbox.**
 

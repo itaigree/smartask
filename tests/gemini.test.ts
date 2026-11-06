@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildPrompt, parseGeminiReply, extractText, describeGeminiError,
+  buildPrompt, calendarLines, sanitizeExtraction,
+  parseGeminiReply, extractText, describeGeminiError,
   scoreModel, pickDefaultModel, listGeminiModels, createGeminiCategorizer,
   classifyWithGemini, GeminiError,
 } from '../src/lib/categorize/gemini.ts';
@@ -52,7 +53,10 @@ test('academic work is described under Work, so research admin lands there', () 
 
 test('a clean JSON reply is parsed', () => {
   const signal = parseGeminiReply('{"category":"Finance","confidence":0.9,"reason":"a bill"}');
-  assert.deepEqual(signal, { category: 'Finance', confidence: 0.9, reason: 'a bill' });
+  assert.deepEqual(signal, {
+    category: 'Finance', confidence: 0.9, reason: 'a bill',
+    extracted: { due: null, title: null },
+  });
 });
 
 test('code fences and surrounding prose are tolerated', () => {
@@ -212,4 +216,78 @@ test('a Hebrew task Gemini classifies is filed by Gemini, not left in Inbox', as
   );
   assert.equal(signal.category, 'Work');
   assert.equal(signal.source, 'gemini');
+});
+
+/* ------------------------------------------------------------------ *
+ * Dates
+ * ------------------------------------------------------------------ */
+
+// Friday 6 November 2026, local time.
+const FRI = new Date(2026, 10, 6, 9, 0, 0);
+
+test('the prompt states today and writes out the next two weeks', () => {
+  const prompt = buildPrompt({ title: 'לשלם חשבון חשמל מחר', now: FRI });
+  assert.match(prompt, /Today is Friday, 2026-11-06/);
+  assert.match(prompt, /Saturday 2026-11-07/);
+  assert.match(prompt, /Thursday 2026-11-12/);
+  assert.match(prompt, /"מחר" is tomorrow/);
+  assert.match(prompt, /do not translate, rephrase or shorten/);
+  assert.match(prompt, /"due": "<YYYY-MM-DD or null>"/);
+});
+
+test('the calendar is fourteen correct days with today and tomorrow marked', () => {
+  const lines = calendarLines(FRI);
+  assert.equal(lines.length, 14);
+  assert.equal(lines[0].trim(), 'Friday 2026-11-06 (today)');
+  assert.equal(lines[1].trim(), 'Saturday 2026-11-07 (tomorrow)');
+  assert.equal(lines[2].trim(), 'Sunday 2026-11-08');
+  assert.equal(lines[13].trim(), 'Thursday 2026-11-19');
+});
+
+test('a plausible date and a word-removing title both survive', () => {
+  const out = sanitizeExtraction(
+    { due: '2026-11-07', title: 'לשלם חשבון חשמל' },
+    'לשלם חשבון חשמל מחר',
+    FRI,
+  );
+  assert.deepEqual(out, { due: '2026-11-07', title: 'לשלם חשבון חשמל' });
+});
+
+test('impossible or implausible dates are dropped', () => {
+  const due = (d: string) => sanitizeExtraction({ due: d, title: null }, 'x', FRI).due;
+  assert.equal(due('2026-02-31'), null, 'not a real date');
+  assert.equal(due('tomorrow'), null, 'not ISO');
+  assert.equal(due('2026-11-7'), null, 'not zero-padded');
+  assert.equal(due('2020-01-01'), null, 'years in the past');
+  assert.equal(due('2099-01-01'), null, 'decades ahead');
+  assert.equal(due('2026-11-02'), '2026-11-02', 'a few days overdue is allowed');
+});
+
+test('a translated or rephrased title is refused, keeping the user\'s own words', () => {
+  const title = (t: string) =>
+    sanitizeExtraction({ due: '2026-11-07', title: t }, 'לשלם חשבון חשמל מחר', FRI).title;
+  assert.equal(title('pay the electricity bill'), null, 'translated');
+  assert.equal(title('לשלם את החשבון'), null, 'reworded');
+  assert.equal(title('לשלם חשבון חשמל מחר בבוקר'), null, 'longer than the original');
+  assert.equal(title(''), null);
+  assert.equal(title('לשלם חשבון חשמל.'), 'לשלם חשבון חשמל.', 'punctuation is tolerated');
+});
+
+test('a Hebrew task gets its date and a clean title from Gemini', async () => {
+  const signal = await withFetch(
+    async () => jsonResponse(reply(JSON.stringify({
+      category: 'Finance', due: '2026-11-07', title: 'לשלם חשבון חשמל',
+      confidence: 0.95, reason: 'utility bill',
+    }))),
+    () => classifyWithGemini(
+      { apiKey: 'k', model: 'm' },
+      { title: 'לשלם חשבון חשמל מחר', now: FRI },
+    ),
+  );
+  assert.equal(signal.category, 'Finance');
+  assert.deepEqual(signal.extracted, { due: '2026-11-07', title: 'לשלם חשבון חשמל' });
+});
+
+test('a bare-word reply carries no extraction, rather than inventing one', () => {
+  assert.equal(parseGeminiReply('Finance')?.extracted, undefined);
 });

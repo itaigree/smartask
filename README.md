@@ -105,6 +105,11 @@ better at those and costs nothing.
   models your key can use and picks the cheapest suitable one. You can change it
   in the same panel, and **Test it** runs a real classification so you can see
   it work.
+- **Any language, dates included.** Gemini classifies by meaning and also
+  finds the due date — "מחר", "ביום שלישי", "בעוד שבוע" — taking the date words
+  out of the title. A date the built-in parser already understood (English
+  "friday", "25/12") always wins; Gemini only fills the gap. Gemini's title is
+  used only if it removes words without changing any, so your wording is kept.
 - **Any language.** Gemini classifies by meaning, so Hebrew (or anything else)
   works. The keyword rules are English-only, which is why they file non-English
   tasks to Inbox when AI is off.
@@ -119,6 +124,24 @@ better at those and costs nothing.
   credentials](https://console.cloud.google.com/apis/credentials), set an
   **HTTP referrer** restriction to your Pages address. Then a copied key is
   useless anywhere else. Two minutes well spent.
+
+## Voice input
+
+Tap the 🎤 next to the box and speak. Words appear as you talk; a pause ends it.
+Nothing is saved until you tap **Add**, so you can fix a misheard word first.
+
+The small **🎤 עברית / English** button under the box switches the language and
+remembers your choice. It starts in Hebrew on a phone set up with Hebrew.
+
+It uses the browser's built-in speech recognition, so it is free and needs no
+key. Support varies:
+
+- **Android (Chrome):** works, including when installed to the home screen.
+- **iPhone (Safari tab):** generally works.
+- **iPhone, installed to the home screen:** may refuse. The app says so.
+
+Wherever it does not work, the 🎤 on your **keyboard** does — it dictates Hebrew
+and English into any text box, this one included.
 
 ## Where your tokens are kept
 

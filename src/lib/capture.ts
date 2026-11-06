@@ -43,14 +43,24 @@ export async function captureDraft(
     note: parsed.note,
     project: parsed.project,
     tags: parsed.tags,
+    now,
   });
 
+  // The local parser is deterministic and tested, so a date it found always
+  // wins. An AI-extracted date only fills the gap — a Hebrew "מחר", say — and
+  // brings its cleaned title with it, so the date words leave the title.
+  let { title, due } = parsed;
+  if (!due && signal.extracted?.due) {
+    due = signal.extracted.due;
+    if (signal.extracted.title) title = signal.extracted.title;
+  }
+
   const draft: NewTask = {
-    title: parsed.title,
+    title,
     category: signal.category,
     priority: parsed.priority,
     status: 'Todo',
-    due: parsed.due,
+    due,
     project: parsed.project,
     tags: parsed.tags,
     note: parsed.note,

@@ -1,4 +1,5 @@
 import { CATEGORIES, isCategory, type Category } from '../types.ts';
+import { addDays, toISODate } from '../parse.ts';
 import type { CategorySignal, Categorizer, RuleInput } from './index.ts';
 
 /**
@@ -49,7 +50,24 @@ const EXAMPLES: Array<[string, Category]> = [
   ['buy milk', 'Errands'],
 ];
 
+const WEEKDAY_NAMES = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+];
+
+/**
+ * The next two weeks written out. Models are unreliable at weekday arithmetic,
+ * and "ביום שלישי" is only answerable if the model can look the date up.
+ */
+export function calendarLines(now: Date): string[] {
+  return Array.from({ length: 14 }, (_, i) => {
+    const day = addDays(now, i);
+    const label = i === 0 ? ' (today)' : i === 1 ? ' (tomorrow)' : '';
+    return `  ${WEEKDAY_NAMES[day.getDay()]} ${toISODate(day)}${label}`;
+  });
+}
+
 export function buildPrompt(input: RuleInput): string {
+  const now = input.now ?? new Date();
   const lines = [
     'Classify this personal task into exactly one category.',
     '',
@@ -71,6 +89,18 @@ export function buildPrompt(input: RuleInput): string {
 
   lines.push(
     '',
+    `Today is ${WEEKDAY_NAMES[now.getDay()]}, ${toISODate(now)}. The next two weeks:`,
+    ...calendarLines(now),
+    '',
+    'Also find the due date if the task mentions one, in any language — for example',
+    '"מחר" is tomorrow, "מחרתיים" the day after, "היום" today, "בעוד שבוע" a week from',
+    'today, "ביום חמישי" the next Thursday (today counts if today is Thursday).',
+    'Look weekdays up in the list above rather than calculating them.',
+    'Give due as YYYY-MM-DD, or null if the task names no date at all.',
+    '',
+    'Also give title: the task text with only the date words removed.',
+    'Keep the same language and the same words — do not translate, rephrase or shorten.',
+    '',
     'Judge by what the task is actually about, not by single keywords.',
     '"Pay the electricity bill" is Finance even if it concerns the home.',
     'Commit to the most likely category even when the task is terse. A task to',
@@ -78,7 +108,7 @@ export function buildPrompt(input: RuleInput): string {
     'Do not choose Inbox just because the task is short.',
     '',
     'Reply with only a JSON object, no prose and no code fence:',
-    '{"category": "<one category from the list>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}',
+    '{"category": "<one category from the list>", "due": "<YYYY-MM-DD or null>", "title": "<task without date words>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}',
   );
 
   return lines.join('\n');
@@ -103,6 +133,8 @@ export function parseGeminiReply(text: string): CategorySignal | null {
         category?: unknown;
         confidence?: unknown;
         reason?: unknown;
+        due?: unknown;
+        title?: unknown;
       };
       if (isCategory(parsed.category)) {
         const raw = Number(parsed.confidence);
@@ -110,7 +142,16 @@ export function parseGeminiReply(text: string): CategorySignal | null {
         const reason = typeof parsed.reason === 'string' && parsed.reason.trim()
           ? parsed.reason.trim().slice(0, 80)
           : 'classified by Gemini';
-        return { category: parsed.category, confidence, reason };
+        return {
+          category: parsed.category,
+          confidence,
+          reason,
+          // Unvalidated here; sanitizeExtraction() decides what survives.
+          extracted: {
+            due: typeof parsed.due === 'string' ? parsed.due : null,
+            title: typeof parsed.title === 'string' ? parsed.title : null,
+          },
+        };
       }
     } catch {
       // Fall through to the bare-word search below.
@@ -125,6 +166,57 @@ export function parseGeminiReply(text: string): CategorySignal | null {
   }
 
   return null;
+}
+
+/** Words for comparison: lowercase, punctuation stripped, Hebrew letters kept. */
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter(Boolean);
+}
+
+/** A real calendar date in `YYYY-MM-DD`, not "2026-02-31". */
+function isRealDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
+}
+
+/**
+ * Decide which parts of what the model extracted can be trusted.
+ *
+ * - The date must be a real date, and plausible for a task: up to a week in the
+ *   past (something already overdue), no more than three years ahead.
+ * - The title may only *remove* words. Every word in it must already be in the
+ *   original, so a model that translates or rephrases the task is ignored and
+ *   the user's own words are kept.
+ */
+export function sanitizeExtraction(
+  raw: { due: string | null; title: string | null } | undefined,
+  originalTitle: string,
+  now: Date,
+): { due: string | null; title: string | null } {
+  if (!raw) return { due: null, title: null };
+
+  let due: string | null = null;
+  if (raw.due && isRealDate(raw.due)) {
+    const earliest = toISODate(addDays(now, -7));
+    const latest = toISODate(addDays(now, 365 * 3));
+    if (raw.due >= earliest && raw.due <= latest) due = raw.due;
+  }
+
+  let title: string | null = null;
+  const candidate = raw.title?.trim() ?? '';
+  if (candidate && candidate.length <= originalTitle.length) {
+    const allowed = new Set(words(originalTitle));
+    const used = words(candidate);
+    if (used.length > 0 && used.every((w) => allowed.has(w))) title = candidate;
+  }
+
+  return { due, title };
 }
 
 /** The text of the first candidate, or '' when the reply was blocked or empty. */
@@ -282,7 +374,11 @@ export async function classifyWithGemini(
 
   const signal = parseGeminiReply(extractText(body));
   if (!signal) throw new GeminiError('Gemini replied with no usable category.');
-  return { ...signal, source: 'gemini' };
+  return {
+    ...signal,
+    source: 'gemini',
+    extracted: sanitizeExtraction(signal.extracted, input.title, input.now ?? new Date()),
+  };
 }
 
 /**

@@ -69,3 +69,52 @@ test('the keyword rules mark their own answers', async () => {
   assert.equal(signal.source, 'rules');
   assert.equal(signal.category, 'Inbox');
 });
+
+/* ------------------------------------------------------------------ *
+ * Dates found by an AI classifier
+ * ------------------------------------------------------------------ */
+
+const withExtraction = (due: string | null, title: string | null) => ({
+  name: 'stub-ai',
+  async categorize() {
+    return {
+      category: 'Finance' as const, confidence: 0.9, reason: 'stub', source: 'gemini' as const,
+      extracted: { due, title },
+    };
+  },
+});
+
+test('an AI-found date fills the gap, and its cleaned title replaces the raw one', async () => {
+  const { draft } = await captureDraft(
+    'לשלם חשבון חשמל מחר', NOW, withExtraction(iso(1), 'לשלם חשבון חשמל'),
+  );
+  assert.equal(draft.due, iso(1));
+  assert.equal(draft.title, 'לשלם חשבון חשמל');
+});
+
+test('a date the local parser found always wins over the AI', async () => {
+  // The parser reads "friday" deterministically; a model disagreeing is ignored.
+  const { draft } = await captureDraft(
+    'pay rent friday', NOW, withExtraction(iso(5), 'pay rent'),
+  );
+  assert.equal(draft.due, iso(2), 'Wednesday -> Friday, from the parser');
+  assert.equal(draft.title, 'pay rent');
+});
+
+test('with no AI title, the date is still used and the original title kept', async () => {
+  const { draft } = await captureDraft('לשלם חשבון חשמל מחר', NOW, withExtraction(iso(1), null));
+  assert.equal(draft.due, iso(1));
+  assert.equal(draft.title, 'לשלם חשבון חשמל מחר');
+});
+
+test('the classifier is told the user\'s "now", so relative dates resolve locally', async () => {
+  let seen: Date | undefined;
+  await captureDraft('x', NOW, {
+    name: 'spy',
+    async categorize(input) {
+      seen = input.now;
+      return { category: 'Inbox', confidence: 0, reason: 'spy' };
+    },
+  });
+  assert.equal(seen?.getTime(), NOW.getTime());
+});

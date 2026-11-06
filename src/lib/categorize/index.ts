@@ -13,6 +13,16 @@ export interface CategorySignal {
   source?: 'rules' | 'gemini';
   /** Set when an AI classifier was tried and the rules answered instead. */
   fallbackReason?: string;
+  /**
+   * Structure an AI found that the local parser could not — a Hebrew date, say.
+   * Already validated by the classifier; capture only uses it to fill gaps.
+   */
+  extracted?: {
+    /** `YYYY-MM-DD`, or null when the task names no date. */
+    due: string | null;
+    /** The title with the date words removed; null when it failed validation. */
+    title: string | null;
+  };
 }
 
 /**

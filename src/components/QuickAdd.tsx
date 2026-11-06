@@ -1,11 +1,15 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseTask } from '../lib/parse.ts';
 import { categorizeByRules } from '../lib/categorize/rules.ts';
 import { daysUntilDue } from '../lib/views.ts';
 import type { Task } from '../lib/types.ts';
+import {
+  loadSpeechLang, mergeTranscript, saveSpeechLang, SPEECH_LANGS, type SpeechLang,
+} from '../lib/speech.ts';
 import { CategoryChip, DueChip, PriorityChip, ProjectChip, TagChip } from './Chips.tsx';
+import VoiceButton from './VoiceButton.tsx';
 
 /**
  * The capture box. It parses as you type, so you can see what the app
@@ -23,6 +27,18 @@ export default function QuickAdd({
 }) {
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Voice: what was typed before speaking started, so speech is appended to it.
+  const spokenBase = useRef('');
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [speechLang, setSpeechLang] = useState<SpeechLang>('en-US');
+  useEffect(() => setSpeechLang(loadSpeechLang()), []);
+
+  function switchSpeechLang() {
+    const next: SpeechLang = speechLang === 'he-IL' ? 'en-US' : 'he-IL';
+    setSpeechLang(next);
+    saveSpeechLang(next);
+  }
 
   const preview = useMemo(() => {
     const trimmed = text.trim();
@@ -46,7 +62,10 @@ export default function QuickAdd({
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     const created = await onCreate(trimmed);
-    if (created) setText('');
+    if (created) {
+      setText('');
+      setVoiceError(null);
+    }
     inputRef.current?.focus();
   }
 
@@ -57,16 +76,38 @@ export default function QuickAdd({
           ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Pay rent friday !! #home @bills"
+          placeholder={
+            // One short example in the language the user speaks: two did not
+            // fit a phone-width box.
+            aiEnabled && speechLang === 'he-IL'
+              ? 'לשלם חשבון חשמל מחר'
+              : 'Pay rent friday !! #home @bills'
+          }
           aria-label="New task"
           dir="auto"
           autoComplete="off"
           enterKeyHint="done"
         />
+        <VoiceButton
+          lang={speechLang}
+          disabled={busy}
+          onStart={() => {
+            spokenBase.current = text;
+            setVoiceError(null);
+          }}
+          onText={(spoken) => setText(mergeTranscript(spokenBase.current, spoken))}
+          onError={setVoiceError}
+        />
         <button type="submit" disabled={!text.trim() || busy}>
           {busy ? 'Saving…' : 'Add'}
         </button>
       </div>
+
+      {voiceError && (
+        <p className="voice-error" role="alert">
+          {voiceError}
+        </p>
+      )}
 
       {preview ? (
         <div className="preview" aria-live="polite">
@@ -76,7 +117,7 @@ export default function QuickAdd({
             // here would put "Inbox" on every Hebrew task even though Gemini,
             // not the rules, makes the call when the task is added.
             <span className="chip ai" title="Gemini picks the category when you add it">
-              ✦ Gemini will categorize
+              ✦ Gemini will sort it{preview.parsed.due ? '' : ' and find any date'}
             </span>
           ) : (
             <CategoryChip category={preview.category} />
@@ -91,10 +132,30 @@ export default function QuickAdd({
           ))}
         </div>
       ) : (
-        <p className="hint">
-          <code>friday</code> / <code>in 3 days</code> sets a date · <code>!</code> or{' '}
-          <code>!!</code> sets priority · <code>#project</code> · <code>@tag</code>
-        </p>
+        <div className="hint-row">
+          <p className="hint">
+            {aiEnabled ? (
+              <>
+                Type or speak naturally, in Hebrew or English — Gemini finds the category and
+                any date. <code>!!</code> urgent · <code>#project</code> · <code>@tag</code>
+              </>
+            ) : (
+              <>
+                <code>friday</code> / <code>in 3 days</code> sets a date · <code>!</code> or{' '}
+                <code>!!</code> sets priority · <code>#project</code> · <code>@tag</code>
+              </>
+            )}
+          </p>
+          <button
+            type="button"
+            className="lang-toggle"
+            onClick={switchSpeechLang}
+            title="Language for voice input"
+            aria-label={`Voice language: ${SPEECH_LANGS[speechLang]}. Tap to switch.`}
+          >
+            🎤 {SPEECH_LANGS[speechLang]}
+          </button>
+        </div>
       )}
     </form>
   );

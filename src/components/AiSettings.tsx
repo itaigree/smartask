@@ -76,12 +76,12 @@ export default function AiSettings({
     if (!config) return;
     setStatus({ kind: 'busy', label: 'Asking Gemini…' });
     try {
-      const signal = await classifyWithGemini(config, {
-        title: 'pay the electricity bill before the weekend',
-      });
+      const sample = 'לשלם חשבון חשמל מחר';
+      const signal = await classifyWithGemini(config, { title: sample, now: new Date() });
+      const due = signal.extracted?.due ? `, due ${signal.extracted.due}` : ', no date found';
       setStatus({
         kind: 'ok',
-        message: `Gemini filed the test task as ${signal.category} — ${signal.reason}.`,
+        message: `Test task "${sample}" → ${signal.category}${due} — ${signal.reason}.`,
       });
     } catch (error) {
       setStatus({ kind: 'error', message: error instanceof Error ? error.message : 'Failed.' });

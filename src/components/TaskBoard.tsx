@@ -9,7 +9,8 @@ import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts
 import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
 import type { Task } from '../lib/types.ts';
-import { buildView, countTasks, type ViewId } from '../lib/views.ts';
+import { buildView, countTasks, daysUntilDue, type ViewId } from '../lib/views.ts';
+import { dueLabel } from './Chips.tsx';
 import QuickAdd from './QuickAdd.tsx';
 import TaskCard from './TaskCard.tsx';
 import ViewTabs from './ViewTabs.tsx';
@@ -44,7 +45,7 @@ export default function TaskBoard({
   const [creating, setCreating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   /** What happened to the last capture — who filed it, and why if it fell back. */
-  const [lastCapture, setLastCapture] = useState<{ title: string; signal: CategorySignal } | null>(
+  const [lastCapture, setLastCapture] = useState<{ task: Task; signal: CategorySignal } | null>(
     null,
   );
   const [sorting, setSorting] = useState<SortProgress | null>(null);
@@ -91,7 +92,7 @@ export default function TaskBoard({
       try {
         const { task, signal } = await repo.captureTask(text);
         setTasks((current) => [task, ...(current ?? [])]);
-        setLastCapture({ title: task.title, signal });
+        setLastCapture({ task, signal });
         setError(null);
         return task;
       } catch (e) {
@@ -259,7 +260,8 @@ export default function TaskBoard({
 
       {lastCapture && (
         <CaptureNote
-          title={lastCapture.title}
+          task={lastCapture.task}
+          now={now}
           signal={lastCapture.signal}
           aiEnabled={aiEnabled}
           onOpenAi={onOpenAi}
@@ -339,25 +341,35 @@ export default function TaskBoard({
  * identical — which is exactly the confusion it exists to prevent.
  */
 function CaptureNote({
-  title,
+  task,
+  now,
   signal,
   aiEnabled,
   onOpenAi,
   onDismiss,
 }: {
-  title: string;
+  task: Task;
+  now: Date | null;
   signal: CategorySignal;
   aiEnabled: boolean;
   onOpenAi: () => void;
   onDismiss: () => void;
 }) {
+  const title = task.title;
   let body: React.ReactNode;
   let tone = 'ok';
+  const due = task.due ? (
+    <>
+      , due <strong>{dueLabel(task.due, now ? daysUntilDue(task, now) : null)}</strong>
+    </>
+  ) : null;
 
   if (signal.source === 'gemini') {
     body = (
       <>
-        ✦ Gemini filed <strong>{title}</strong> under <strong>{signal.category}</strong>
+        ✦ Gemini filed <strong dir="auto">{title}</strong> under{' '}
+        <strong>{signal.category}</strong>
+        {due}
         {signal.reason ? ` — ${signal.reason}` : ''}
       </>
     );

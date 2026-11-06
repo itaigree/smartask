@@ -78,6 +78,8 @@ export interface RuleInput {
   note?: string | null;
   project?: string | null;
   tags?: string[];
+  /** The user's local "now", for classifiers that resolve relative dates. Rules ignore it. */
+  now?: Date;
 }
 
 /**
