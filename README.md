@@ -245,8 +245,12 @@ with no page access looks exactly like a wrong id.
   app caches reads for 20 seconds and clears that cache on every write.
 - **Deleting** moves the Notion page to the trash. Nothing is destroyed, and you
   can restore it from Notion.
-- **Not in v1:** recurring tasks, reminders, multiple users, and pushing Notion
-  edits back to an open tab (hit ↻ to re-read).
+- **Syncing.** Everything you do in the app reaches Notion immediately — there
+  is no schedule. Edits made *in Notion* reach the app whenever you switch back
+  to it (at most once every 10 seconds), or when you tap ↻. Nothing is fetched
+  while the app sits unused. If a new task does not show in Notion, that is
+  Notion's own view not redrawing: pull down to refresh on a phone, or reload.
+- **Not in v1:** recurring tasks, reminders, multiple users.
 - **Each browser connects separately.** The token lives on one device, so a
   phone and a laptop each need it pasted once. The tasks are shared because
   Notion holds them; only the credential is per-device.

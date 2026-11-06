@@ -155,6 +155,13 @@ of the screen. **Not verified: what the real Gemini decides** — the intercepte
 Gemini answered with categories I chose. The plumbing is proven; the judgement
 is not.
 
+Also added **refresh on return**: the app re-reads Notion when it becomes
+visible or focused again, so an edit made in Notion is on screen by the time
+you switch back. Throttled to once per 10 seconds — phones fire visibility and
+focus together, and the end-to-end run confirms that burst produces exactly
+one read — and skipped while a capture or sort is in flight. Not a timer:
+nothing is fetched while the app sits unused.
+
 Known gap, not addressed: the date parser is English-only, so "מחר" (tomorrow)
 is not recognised and Hebrew tasks get no due date.
 

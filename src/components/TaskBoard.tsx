@@ -1,17 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NotionConfig } from '../lib/config.ts';
 import { maskToken } from '../lib/config.ts';
 import { describeNotionError } from '../lib/notion.ts';
 import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
+import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
 import type { Task } from '../lib/types.ts';
 import { buildView, countTasks, type ViewId } from '../lib/views.ts';
 import QuickAdd from './QuickAdd.tsx';
 import TaskCard from './TaskCard.tsx';
 import ViewTabs from './ViewTabs.tsx';
+
+/** Coming back to the app re-reads Notion, but no more often than this. */
+const RETURN_REFRESH_MIN_MS = 10_000;
 
 /**
  * Holds the task list client-side so an edit feels instant, and writes straight
@@ -170,6 +174,38 @@ export default function TaskBoard({
     await load(true);
     setRefreshing(false);
   }, [load]);
+
+  /**
+   * Re-read Notion whenever the user comes back to the app — the moment that
+   * matters on a phone: edit a task in Notion, switch back, and it is already
+   * current. Not a timer: nothing is fetched while the app sits unused, and
+   * bursts of focus events collapse to one request.
+   *
+   * Skipped while a capture or sort is mid-flight, so a refresh cannot replace
+   * the list underneath an in-progress write.
+   */
+  const busyRef = useRef(false);
+  busyRef.current = creating || refreshing || sorting !== null;
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    const allow = createThrottle(RETURN_REFRESH_MIN_MS);
+    allow(); // the initial load counts as the first read
+
+    const onReturn = () => {
+      if (document.visibilityState !== 'visible' || busyRef.current) return;
+      if (!allow()) return;
+      void refreshRef.current();
+    };
+
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, []);
 
   return (
     <>
