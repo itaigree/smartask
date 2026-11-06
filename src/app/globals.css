@@ -677,3 +677,10 @@ button { cursor: pointer; }
   color: var(--danger);
   font-weight: 550;
 }
+
+.heard-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 550;
+}

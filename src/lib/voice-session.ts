@@ -6,10 +6,10 @@ import {
 /**
  * One tap-to-talk session, framework-free so its timing can be tested.
  *
- * Hands-free by design: speak, stop, and the task is added. `onFinal` fires
- * exactly once, with the complete transcript, when speech has ended — whether
- * the recognizer noticed the silence itself, the user tapped the mic again, or
- * the silence backstop below fired.
+ * `onFinal` fires exactly once, with the complete transcript, when speech has
+ * ended — whether the recognizer noticed the silence itself, the user tapped
+ * the mic again, or the silence backstop below fired. The capture box then
+ * shows that text for the user to check before adding.
  *
  * After it closes, nothing from that recognizer is allowed through. That is
  * the fix for a real race: Android delivers its final result a beat after the

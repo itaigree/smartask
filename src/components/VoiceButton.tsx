@@ -10,8 +10,8 @@ export interface VoiceControl {
 }
 
 /**
- * Tap, speak, stop — the task is added when you stop talking. Tapping again
- * while listening means "done" and adds immediately. The timing rules live in
+ * Tap, speak, stop — the words land in the box for the user to check and add.
+ * Tapping again while listening means "done". The timing rules live in
  * voice-session.ts; this component is only the button.
  */
 export default function VoiceButton({

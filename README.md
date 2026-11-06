@@ -146,13 +146,13 @@ better at those and costs nothing.
 
 ## Voice input
 
-Tap the 🎤 next to the box and speak. Words appear as you talk, and **when you
-stop talking the task is added** and the box clears for the next one — tap,
-say, tap, say. Tapping the mic while it is listening means "done" and adds
-straight away.
+Tap the 🎤 next to the box and speak. Words appear as you talk, and the mic
+stops when you stop talking (or tap it to finish sooner). Then **check the
+text, fix anything misheard, and tap Add** — the box clears for the next task.
 
-If the connection drops part-way, nothing is added: what was heard stays in the
-box so you can fix it and tap **Add**.
+Add is unavailable while the mic is listening, on purpose: the words on screen
+are still provisional until speech ends, and saving them early would store a
+cut-off task.
 
 The small **🎤 עברית / English** button under the box switches the language and
 remembers your choice. It starts in Hebrew on a phone set up with Hebrew.
