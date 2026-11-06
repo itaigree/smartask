@@ -159,8 +159,15 @@ export function buildView(id: ViewId, tasks: Task[], now: Date = new Date()): Vi
     }
 
     case 'categories': {
+      // Built-ins in their usual order, then the user's own categories A-Z,
+      // with Inbox last — so a new category gets its own group, not lost.
+      const custom = [...new Set(open.map((t) => t.category))]
+        .filter((c) => !CATEGORY_ORDER.includes(c))
+        .sort((a, b) => a.localeCompare(b));
+      const order = [...CATEGORY_ORDER.filter((c) => c !== 'Inbox'), ...custom, 'Inbox'];
+
       const groups: TaskGroup[] = [];
-      for (const category of CATEGORY_ORDER) {
+      for (const category of order) {
         const list = open.filter((t) => t.category === category).sort(sort);
         if (list.length) groups.push({ key: category, label: category, tasks: list });
       }

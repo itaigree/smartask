@@ -99,8 +99,10 @@ test('malformed stored tasks are dropped or repaired, never trusted', () => {
   assert.equal(sanitizeStoredTask(null), null);
   assert.equal(sanitizeStoredTask({ id: 'a' }), null, 'no title');
   assert.equal(sanitizeStoredTask({ title: 'x' }), null, 'no id');
-  const repaired = sanitizeStoredTask({ id: 'a', title: 'x', category: 'Nonsense', due: 'soon' });
-  assert.equal(repaired?.category, 'Inbox');
+  const repaired = sanitizeStoredTask({ id: 'a', title: 'x', category: 42, due: 'soon' });
+  assert.equal(repaired?.category, 'Inbox', 'a non-name falls back to Inbox');
+  assert.equal(sanitizeStoredTask({ id: 'b', title: 'y', category: 'Research' })?.category, 'Research',
+    'a custom category survives a reload');
   assert.equal(repaired?.due, null);
   assert.equal(repaired?.url, null);
 });

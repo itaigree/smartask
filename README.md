@@ -109,6 +109,20 @@ link, press **Connect**. On a
 phone, use **Add to Home Screen** (iOS) or **Install app** (Android) to get an
 icon and a full-screen window.
 
+## Changing a task's category
+
+Tap the category on any task. A sheet lists every category, with the current
+one ticked — tap another to move the task, or type a name and tap **Create** for
+a new category.
+
+New categories get their own colour and their own group in the **All** view,
+and Gemini starts filing tasks into them too. Categories created on another
+device, or added to the Notion database directly, show up on their own. One
+that no task uses any more can be removed with its ✕; the built-in ones cannot.
+
+Names can be up to 40 characters, in any language, but cannot contain a comma —
+Notion does not allow commas in its options.
+
 ## AI classification (optional)
 
 Out of the box, categories come from keyword rules in

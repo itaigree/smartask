@@ -49,12 +49,12 @@ test('a complete Notion page maps to a complete Task', () => {
 test('a page hand-edited in Notion falls back instead of throwing', () => {
   const task = pageToTask(page({
     [PROPS.title]: { title: [] },
-    [PROPS.category]: { select: { name: 'Nonsense' } },
+    [PROPS.category]: { select: { name: 'Bad, name' } },
     [PROPS.priority]: { select: null },
     // Status, Due, Tags, Note removed entirely.
   }));
   assert.equal(task?.title, 'Untitled task');
-  assert.equal(task?.category, 'Inbox', 'an unknown select falls back to Inbox');
+  assert.equal(task?.category, 'Inbox', 'a name Notion could never hold falls back to Inbox');
   assert.equal(task?.priority, 'Normal');
   assert.equal(task?.status, 'Todo');
   assert.equal(task?.due, null);
@@ -114,4 +114,18 @@ test('the schema offers exactly the values the app can produce', () => {
   assert.deepEqual(names(SCHEMA[PROPS.category]), [...CATEGORIES]);
   assert.deepEqual(names(SCHEMA[PROPS.priority]), [...PRIORITIES]);
   assert.deepEqual(names(SCHEMA[PROPS.status]), [...STATUSES]);
+});
+
+test('a category the user created — in the app or in Notion — is kept, not turned into Inbox', () => {
+  const task = pageToTask(page({
+    [PROPS.title]: { title: [{ plain_text: 'x' }] },
+    [PROPS.category]: { select: { name: '  Research  ' } },
+  }));
+  assert.equal(task?.category, 'Research', 'kept, with stray spaces trimmed');
+
+  const lower = pageToTask(page({
+    [PROPS.title]: { title: [{ plain_text: 'x' }] },
+    [PROPS.category]: { select: { name: 'work' } },
+  }));
+  assert.equal(lower?.category, 'Work', 'a built-in in other casing is not a second category');
 });

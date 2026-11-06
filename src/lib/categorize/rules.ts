@@ -1,4 +1,4 @@
-import type { Category } from '../types.ts';
+import type { BuiltInCategory as Category } from '../types.ts';
 import type { CategorySignal, Categorizer } from './index.ts';
 
 /**

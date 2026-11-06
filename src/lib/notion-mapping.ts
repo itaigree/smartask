@@ -1,6 +1,6 @@
 import {
   CATEGORIES, PRIORITIES, STATUSES,
-  isCategory, isPriority, isStatus,
+  normalizeCategoryName, isPriority, isStatus,
   type NewTask, type Task, type TaskPatch,
 } from './types.ts';
 
@@ -111,7 +111,8 @@ export function pageToTask(page: unknown): Task | null {
   return {
     id: p.id,
     title: readTitle(props, PROPS.title) || 'Untitled task',
-    category: isCategory(category) ? category : 'Inbox',
+    // A category added in the app, or straight in Notion, is kept as is.
+    category: normalizeCategoryName(category) ?? 'Inbox',
     priority: isPriority(priority) ? priority : 'Normal',
     status: isStatus(status) ? status : 'Todo',
     due: readDate(props, PROPS.due),

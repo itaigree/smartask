@@ -8,15 +8,15 @@ import { CategoryChip, DueChip, PriorityChip, ProjectChip, TagChip } from './Chi
 export default function TaskCard({
   task,
   now,
-  hideCategory = false,
   localOnly = false,
+  onEditCategory,
   onToggle,
   onDelete,
 }: {
   task: Task;
   now: Date;
-  /** Suppressed in the All view, where the group heading already says it. */
-  hideCategory?: boolean;
+  /** Opens the category picker for this task. */
+  onEditCategory?: (task: Task) => void;
   /** Phone-only tasks have no trash to recover from, so the warning is stronger. */
   localOnly?: boolean;
   onToggle: (task: Task) => Promise<void>;
@@ -61,7 +61,10 @@ export default function TaskCard({
         )}
 
         <div className="card-meta">
-          {!hideCategory && <CategoryChip category={task.category} />}
+          <CategoryChip
+            category={task.category}
+            onClick={onEditCategory ? () => onEditCategory(task) : undefined}
+          />
           {!done && <PriorityChip priority={task.priority} />}
           {task.due && <DueChip due={task.due} daysAway={done ? null : daysAway} />}
           {task.project && <ProjectChip project={task.project} />}

@@ -1,4 +1,4 @@
-import { CATEGORIES, isCategory, type Category } from '../types.ts';
+import { BUILT_IN_CATEGORIES, type BuiltInCategory, type Category } from '../types.ts';
 import { addDays, toISODate } from '../parse.ts';
 import type { CategorySignal, Categorizer, RuleInput } from './index.ts';
 
@@ -23,7 +23,7 @@ export interface GeminiSettings {
 }
 
 /** What each category means, so the model files tasks the way the app's views expect. */
-const CATEGORY_GUIDE: Record<Category, string> = {
+const CATEGORY_GUIDE: Record<BuiltInCategory, string> = {
   Work:
     'a job or an academic career: research, lab, thesis, papers, grants, ethics ' +
     'approvals, supervisors, colleagues, clients, meetings, deadlines, work email',
@@ -41,7 +41,7 @@ const CATEGORY_GUIDE: Record<Category, string> = {
  * language are the normal case, not an edge case — the model should commit to
  * its best guess rather than fall back to Inbox.
  */
-const EXAMPLES: Array<[string, Category]> = [
+const EXAMPLES: Array<[string, BuiltInCategory]> = [
   ['לשלם חשבון חשמל', 'Finance'],
   ['לקבוע תור לרופאת שיניים', 'Health'],
   ['להגיש טופס לוועדת אתיקה', 'Work'],
@@ -66,7 +66,27 @@ export function calendarLines(now: Date): string[] {
   });
 }
 
-export function buildPrompt(input: RuleInput): string {
+/** How a category is described to the model. Custom ones have no guide — just their name. */
+function describeCategory(name: string): string {
+  const guide = (CATEGORY_GUIDE as Record<string, string>)[name];
+  return guide
+    ? `- ${name}: ${guide}`
+    : `- ${name}: the user's own category — use it whenever the task clearly fits it`;
+}
+
+/**
+ * The categories to offer: the built-ins plus any the user created, Inbox
+ * kept last so it reads as the fallback it is.
+ */
+function offered(categories: readonly string[]): string[] {
+  const list = [...new Set([...BUILT_IN_CATEGORIES, ...categories])].filter((c) => c !== 'Inbox');
+  return [...list, 'Inbox'];
+}
+
+export function buildPrompt(
+  input: RuleInput,
+  categories: readonly string[] = BUILT_IN_CATEGORIES,
+): string {
   const now = input.now ?? new Date();
   const lines = [
     'Classify this personal task into exactly one category.',
@@ -75,7 +95,7 @@ export function buildPrompt(input: RuleInput): string {
     'Classify it by meaning. Always answer with the English category name.',
     '',
     'Categories:',
-    ...CATEGORIES.map((c) => `- ${c}: ${CATEGORY_GUIDE[c]}`),
+    ...offered(categories).map(describeCategory),
     '',
     'Examples:',
     ...EXAMPLES.map(([task, category]) => `${JSON.stringify(task)} -> ${category}`),
@@ -121,8 +141,18 @@ export function buildPrompt(input: RuleInput): string {
  * All of those are recoverable, so parse leniently and validate strictly — an
  * unrecognised category is discarded rather than trusted.
  */
-export function parseGeminiReply(text: string): CategorySignal | null {
+export function parseGeminiReply(
+  text: string,
+  allowed: readonly string[] = BUILT_IN_CATEGORIES,
+): CategorySignal | null {
   if (!text) return null;
+
+  // Match case-insensitively, but always return the user's own spelling.
+  const choices = offered(allowed);
+  const canonical = (name: unknown): Category | null =>
+    typeof name === 'string'
+      ? choices.find((c) => c.toLowerCase() === name.trim().toLowerCase()) ?? null
+      : null;
 
   const stripped = text.replace(/```(?:json)?/gi, '').trim();
   const match = /\{[\s\S]*\}/.exec(stripped);
@@ -136,14 +166,15 @@ export function parseGeminiReply(text: string): CategorySignal | null {
         due?: unknown;
         title?: unknown;
       };
-      if (isCategory(parsed.category)) {
+      const category = canonical(parsed.category);
+      if (category) {
         const raw = Number(parsed.confidence);
         const confidence = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.8;
         const reason = typeof parsed.reason === 'string' && parsed.reason.trim()
           ? parsed.reason.trim().slice(0, 80)
           : 'classified by Gemini';
         return {
-          category: parsed.category,
+          category,
           confidence,
           reason,
           // Unvalidated here; sanitizeExtraction() decides what survives.
@@ -158,9 +189,11 @@ export function parseGeminiReply(text: string): CategorySignal | null {
     }
   }
 
-  // No usable JSON: accept a reply that is just the category name.
-  for (const category of CATEGORIES) {
-    if (new RegExp(`\\b${category}\\b`, 'i').test(stripped)) {
+  // No usable JSON: accept a reply that is just a category name. Longer names
+  // first, so "Home Office" is not read as "Home".
+  for (const category of [...choices].sort((a, b) => b.length - a.length)) {
+    const escaped = category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(^|[^\\p{L}])${escaped}($|[^\\p{L}])`, 'iu').test(stripped)) {
       return { category, confidence: 0.6, reason: 'classified by Gemini' };
     }
   }
@@ -346,8 +379,10 @@ export function pickDefaultModel(models: GeminiModel[]): string | null {
 export async function classifyWithGemini(
   settings: GeminiSettings,
   input: RuleInput,
+  /** Every category the user has, so Gemini can file into their own ones too. */
+  categories: readonly string[] = BUILT_IN_CATEGORIES,
 ): Promise<CategorySignal> {
-  const prompt = buildPrompt(input);
+  const prompt = buildPrompt(input, categories);
   const path = `/models/${encodeURIComponent(settings.model)}:generateContent`;
 
   // temperature 0 for a stable answer. maxOutputTokens is deliberately NOT set:
@@ -372,7 +407,7 @@ export async function classifyWithGemini(
     });
   }
 
-  const signal = parseGeminiReply(extractText(body));
+  const signal = parseGeminiReply(extractText(body), categories);
   if (!signal) throw new GeminiError('Gemini replied with no usable category.');
   return {
     ...signal,
@@ -389,12 +424,14 @@ export function createGeminiCategorizer(
   settings: GeminiSettings,
   fallback: Categorizer,
   onError?: (message: string) => void,
+  /** Read at call time, so a category created a moment ago is already offered. */
+  getCategories: () => readonly string[] = () => BUILT_IN_CATEGORIES,
 ): Categorizer {
   return {
     name: `gemini:${settings.model}`,
     async categorize(input) {
       try {
-        return await classifyWithGemini(settings, input);
+        return await classifyWithGemini(settings, input, getCategories());
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Gemini request failed.';
         onError?.(reason);

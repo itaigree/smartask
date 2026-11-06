@@ -7,6 +7,8 @@ import { LocalStoreError } from '../lib/local-store.ts';
 import { describeNotionError } from '../lib/notion.ts';
 import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
+import { categoryList, unseenCategories } from '../lib/categories.ts';
+import CategoryPicker from './CategoryPicker.tsx';
 import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
 import type { Task } from '../lib/types.ts';
@@ -31,6 +33,8 @@ export default function TaskBoard({
   classify,
   onLeave,
   onOpenAi,
+  customCategories,
+  onCustomCategoriesChange,
 }: {
   repo: TaskRepository;
   /** Where tasks live; changes wording, and whether there is anything to re-read. */
@@ -41,6 +45,9 @@ export default function TaskBoard({
   /** Leave this store for the first-launch choice. Never deletes tasks. */
   onLeave: () => void;
   onOpenAi: () => void;
+  /** Categories the user created, beyond the built-ins. */
+  customCategories: string[];
+  onCustomCategoriesChange: (next: string[]) => void;
 }) {
   const isLocal = storage.kind === 'local';
 
@@ -60,6 +67,8 @@ export default function TaskBoard({
     null,
   );
   const [sorting, setSorting] = useState<SortProgress | null>(null);
+  /** The task whose category picker is open. */
+  const [editing, setEditing] = useState<Task | null>(null);
   const [sortNote, setSortNote] = useState<string | null>(null);
 
   /**
@@ -152,6 +161,57 @@ export default function TaskBoard({
   );
 
   const inbox = useMemo(() => (tasks ? inboxTasks(tasks) : []), [tasks]);
+
+  const allCategories = useMemo(
+    () => categoryList(customCategories, tasks ?? []),
+    [customCategories, tasks],
+  );
+
+  /** Tasks per category, so a custom one nobody uses can be offered for removal. */
+  const usage = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of tasks ?? []) counts.set(t.category, (counts.get(t.category) ?? 0) + 1);
+    return counts;
+  }, [tasks]);
+
+  // Learn categories found on tasks — made on another device, or added straight
+  // in Notion — so they appear in the picker and Gemini is offered them too.
+  useEffect(() => {
+    if (!tasks) return;
+    const unseen = unseenCategories(customCategories, tasks);
+    if (unseen.length) onCustomCategoriesChange([...customCategories, ...unseen]);
+  }, [tasks, customCategories, onCustomCategoriesChange]);
+
+  const changeCategory = useCallback(
+    async (task: Task, category: string) => {
+      setEditing(null);
+      if (category === task.category) return;
+
+      // A brand-new name joins the list straight away, so it is offered next time.
+      if (!allCategories.some((c) => c.toLowerCase() === category.toLowerCase())) {
+        onCustomCategoriesChange([...customCategories, category]);
+      }
+
+      const previous = tasks;
+      setTasks((current) =>
+        (current ?? []).map((t) => (t.id === task.id ? { ...t, category } : t)),
+      );
+      try {
+        const saved = await repo.updateTask(task.id, { category });
+        setTasks((current) => (current ?? []).map((t) => (t.id === task.id ? saved : t)));
+        setError(null);
+      } catch (e) {
+        setTasks(previous);
+        setError(describeError(e));
+      }
+    },
+    [allCategories, customCategories, onCustomCategoriesChange, repo, tasks],
+  );
+
+  const removeCategory = useCallback(
+    (name: string) => onCustomCategoriesChange(customCategories.filter((c) => c !== name)),
+    [customCategories, onCustomCategoriesChange],
+  );
 
   const sortWithAi = useCallback(async () => {
     if (!classify || !tasks || sorting) return;
@@ -337,8 +397,8 @@ export default function TaskBoard({
                   key={task.id}
                   task={task}
                   now={now}
-                  hideCategory={view === 'categories'}
                   localOnly={isLocal}
+                  onEditCategory={setEditing}
                   onToggle={toggle}
                   onDelete={remove}
                 />
@@ -346,6 +406,17 @@ export default function TaskBoard({
             </div>
           </section>
         ))
+      )}
+
+      {editing && (
+        <CategoryPicker
+          task={editing}
+          categories={allCategories}
+          usage={usage}
+          onPick={(category) => void changeCategory(editing, category)}
+          onRemove={removeCategory}
+          onClose={() => setEditing(null)}
+        />
       )}
     </>
   );

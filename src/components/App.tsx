@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   clearConfig, loadConfig, loadGeminiConfig, loadLocalChosen, resolveStorageMode,
   setLocalChosen,
   type GeminiConfig, type NotionConfig,
 } from '../lib/config.ts';
 import { getCategorizer } from '../lib/categorize/index.ts';
+import {
+  categoryList, loadCustomCategories, saveCustomCategories,
+} from '../lib/categories.ts';
 import { classifyWithGemini, createGeminiCategorizer } from '../lib/categorize/gemini.ts';
 import {
   countLocalTasks, createLocalRepository, requestPersistentStorage,
@@ -34,6 +37,17 @@ export default function App() {
   const [ready, setReady] = useState(false);
   /** Bumped after a restore so the board re-reads local storage. */
   const [revision, setRevision] = useState(0);
+  const [customCategories, setCustomCategoriesState] = useState<string[]>([]);
+
+  const setCustomCategories = useCallback((next: string[]) => {
+    setCustomCategoriesState(next);
+    saveCustomCategories(next);
+  }, []);
+
+  // Gemini reads the category list when it classifies, not when it was set up,
+  // so a category created a moment ago is already on offer.
+  const categoriesRef = useRef<string[]>([]);
+  categoriesRef.current = categoryList(customCategories);
 
   // Local storage is not available while the page is being prerendered at build
   // time, so everything is read after mount. `ready` keeps the first-launch
@@ -42,6 +56,7 @@ export default function App() {
     setConfig(loadConfig());
     setLocalChosenState(loadLocalChosen());
     setGemini(loadGeminiConfig());
+    setCustomCategoriesState(loadCustomCategories());
     setReady(true);
   }, []);
 
@@ -58,7 +73,10 @@ export default function App() {
    * it: a failed request must never stop a task being saved.
    */
   const categorizer = useMemo(
-    () => (gemini ? createGeminiCategorizer(gemini, getCategorizer()) : getCategorizer()),
+    () =>
+      gemini
+        ? createGeminiCategorizer(gemini, getCategorizer(), undefined, () => categoriesRef.current)
+        : getCategorizer(),
     [gemini],
   );
 
@@ -66,7 +84,8 @@ export default function App() {
   const classify = useMemo(
     () =>
       gemini
-        ? (input: Parameters<typeof classifyWithGemini>[1]) => classifyWithGemini(gemini, input)
+        ? (input: Parameters<typeof classifyWithGemini>[1]) =>
+            classifyWithGemini(gemini, input, categoriesRef.current)
         : null,
     [gemini],
   );
@@ -149,6 +168,8 @@ export default function App() {
         classify={classify}
         onLeave={leave}
         onOpenAi={() => setShowAi(true)}
+        customCategories={customCategories}
+        onCustomCategoriesChange={setCustomCategories}
       />
       {mode === 'notion' ? (
         <p className="footer">Every task lives in your own Notion database.</p>

@@ -117,9 +117,46 @@ Later phases must not violate these:
 - [x] Phase 12: Dates in any language — Gemini returns a due date and a date-free title; the local parser's date always wins, the AI's only fills the gap — Done when: "לשלם חשבון חשמל מחר" saves as Finance, due tomorrow, titled "לשלם חשבון חשמל".
 - [x] Phase 13: Voice input — browser speech recognition, Hebrew or English, transcript into the capture box for review — Done when: speaking a task fills the box and Add saves it; where the browser cannot, the user is pointed at the keyboard's dictation key.
 - [x] Phase 14: Phone-only mode — tasks kept in the browser with no account; Notion becomes optional; backup and restore — Done when: a new user can choose "On this phone only" and use every feature with zero Notion requests, and a user with saved Notion credentials sees no change.
+- [x] Phase 15: Editable and custom categories — tap a task's category to move it, or create a new category — Done when: a new category is applied, survives a reload in both stores, gets its own group in All, and Gemini can file into it.
 - [x] Phase 8: AI categorizer — `categorize/gemini.ts` behind a user-supplied Google AI Studio key — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works. **Built with Gemini rather than Claude at the user's request; the `Categorizer` seam took it unchanged.**
 
 ## Status log
+
+**2026-11-06 — Phase 15: editable and custom categories.**
+
+Tapping a task's category opens a sheet listing every category, the current
+one marked, with a field to create a new one.
+
+Categories were a closed set of eight, and that assumption was load-bearing in
+places a new name would have silently fallen through: Notion and local reads
+coerced any unknown name to Inbox, the All view only grouped the eight, colours
+only existed for the eight, and Gemini only accepted the eight. `Category` is
+now any name passing `normalizeCategoryName` — trimmed, no commas (Notion select
+options cannot hold them), at most 40 characters, and a built-in in other
+casing resolves to the built-in so "work" never becomes a second Work.
+
+Making the type a plain string meant the compiler could no longer catch these
+spots; the tests did. Three failed on the change. One was a real regression —
+Gemini accepting an invented category — fixed by validating its answer against
+the user's own list. The other two encoded the old Inbox fallback and were
+updated to the new rule.
+
+- **The list** is the built-ins, then the user's own A-Z, Inbox last. Custom
+  names are saved per device *and* learned from tasks, so one created on another
+  phone, or added straight in Notion, appears without setup.
+- **Colour**: a custom category's hue is hashed from its name, so it is the
+  same everywhere without anyone choosing it.
+- **Gemini** is offered custom categories by name, read at call time, so one
+  created a moment ago is already a candidate.
+- **Removal**: an unused custom category can be removed from the list.
+  Built-ins never can.
+- The category chip is now shown in every view, including All — it is a
+  control now, not just a label.
+
+Not verified: that Notion creates a select option on first write of a new
+name. Notion's documented behaviour, and what @tags already rely on, but
+`api.notion.com` is unreachable from here. A refusal would show Notion's
+message in the banner.
 
 **2026-11-06 — Voice: review before adding, at the user's request.**
 

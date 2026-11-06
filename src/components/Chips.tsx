@@ -1,17 +1,48 @@
 'use client';
 
-import type { Category, Priority } from '../lib/types.ts';
+import { categoryHue } from '../lib/categories.ts';
+import { isBuiltInCategory, type Category, type Priority } from '../lib/types.ts';
 
 /** Small presentational chips shared by the capture preview and the task cards. */
 
-export function CategoryChip({ category }: { category: Category }) {
+/**
+ * Built-ins use their palette colour. A custom category gets a hue derived from
+ * its name — stable everywhere — at a lightness set per theme in CSS.
+ */
+function categoryStyle(category: Category): React.CSSProperties {
+  return isBuiltInCategory(category)
+    ? ({ '--chip-color': `var(--cat-${category})` } as React.CSSProperties)
+    : ({ '--chip-hue': categoryHue(category) } as React.CSSProperties);
+}
+
+export function CategoryChip({
+  category,
+  onClick,
+}: {
+  category: Category;
+  /** When given, the chip is a button that opens the category picker. */
+  onClick?: () => void;
+}) {
+  const className = `chip category${isBuiltInCategory(category) ? '' : ' custom'}`;
+  if (!onClick) {
+    return (
+      <span className={className} style={categoryStyle(category)} dir="auto">
+        {category}
+      </span>
+    );
+  }
   return (
-    <span
-      className="chip category"
-      style={{ ['--chip-color' as string]: `var(--cat-${category})` }}
+    <button
+      type="button"
+      className={`${className} editable`}
+      style={categoryStyle(category)}
+      onClick={onClick}
+      aria-label={`Category: ${category}. Tap to change.`}
+      dir="auto"
     >
       {category}
-    </span>
+      <span className="chip-caret" aria-hidden="true">▾</span>
+    </button>
   );
 }
 
