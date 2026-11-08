@@ -30,7 +30,9 @@ test('interim and final results join into one running transcript', () => {
 });
 
 test('every failure explains itself, and most point at the keyboard mic', () => {
-  assert.equal(describeSpeechError('aborted', 'he-IL'), '', 'stopping on purpose is not an error');
+  assert.equal(describeSpeechError('aborted', 'he-IL'), '', 'nothing heard, nothing lost');
+  assert.match(describeSpeechError('aborted', 'he-IL', true), /cut off.*Check the text/,
+    'R1-47: words were cut short — ask for a check');
   assert.match(describeSpeechError('service-not-allowed', 'he-IL'), /home screen/);
   assert.match(describeSpeechError('service-not-allowed', 'he-IL'), /keyboard/);
   assert.match(describeSpeechError('not-allowed', 'he-IL'), /blocked/);

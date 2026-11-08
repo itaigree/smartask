@@ -116,7 +116,7 @@ export function startVoiceSession(
 
   recognition.onerror = (event) => {
     if (closed) return;
-    const message = describeSpeechError(event.error, lang);
+    const message = describeSpeechError(event.error, lang, Boolean(lastText.trim()));
     if (message) callbacks.onError(message);
     // A failure part-way never auto-adds a half-heard task. Whatever was heard
     // stays in the box for the user to fix and add by hand.
@@ -138,4 +138,45 @@ export function startVoiceSession(
     finish: requestFinish,
     cancel: () => close(null),
   };
+}
+
+/**
+ * Build a recognizer and start a session on it, for a button that keeps hold
+ * of the session while it runs.
+ *
+ * Returns null when nothing is listening — building the recognizer or
+ * starting it threw. onError and onEnd have then already been called, once
+ * each. A caller must never keep a session that has closed: the mic button
+ * did, and every later tap "finished" that dead session, so the mic did
+ * nothing until the page was reloaded.
+ */
+export function openVoiceSession(
+  createRecognition: () => SpeechRecognitionLike,
+  lang: SpeechLang,
+  callbacks: VoiceCallbacks,
+  options: VoiceSessionOptions = {},
+): VoiceSession | null {
+  let recognition: SpeechRecognitionLike;
+  try {
+    recognition = createRecognition();
+  } catch {
+    callbacks.onError(describeSpeechError('start-failed', lang));
+    callbacks.onEnd();
+    return null;
+  }
+
+  let open = true;
+  const session = startVoiceSession(
+    recognition,
+    lang,
+    {
+      ...callbacks,
+      onEnd: () => {
+        open = false;
+        callbacks.onEnd();
+      },
+    },
+    options,
+  );
+  return open ? session : null;
 }

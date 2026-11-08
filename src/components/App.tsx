@@ -13,6 +13,7 @@ import {
   categoryList, loadCustomCategories, saveCustomCategories,
 } from '../lib/categories.ts';
 import { classifyWithGemini, createGeminiCategorizer } from '../lib/categorize/gemini.ts';
+import { forgetDeviceSettings, forgetQuestion, leftBehind } from '../lib/forget.ts';
 import {
   countLocalTasks, createLocalRepository, requestPersistentStorage,
 } from '../lib/local-store.ts';
@@ -138,7 +139,11 @@ export default function App() {
     setConfig(next);
   }
 
-  /** Leave the current store and return to the first-launch choice. Deletes no tasks. */
+  /**
+   * Leave the current store and return to the first-launch choice. Deletes no
+   * tasks. Then offers to forget the device-wide settings too (see forget.ts),
+   * since ⏻ is how a shared device is cleaned up.
+   */
   function leave() {
     if (mode === 'notion') {
       clearConfig();
@@ -146,6 +151,14 @@ export default function App() {
     } else {
       setLocalChosen(false);
       setLocalChosenState(false);
+    }
+
+    const question = forgetQuestion(leftBehind(), mode === 'local');
+    if (question && confirm(question)) {
+      forgetDeviceSettings();
+      setGemini(null);
+      setCustomCategoriesState([]);
+      createdRef.current = [];
     }
   }
 

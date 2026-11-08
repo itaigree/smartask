@@ -96,11 +96,17 @@ const KEYBOARD_HINT = 'Use the 🎤 on your keyboard instead — it dictates Heb
 
 export const UNSUPPORTED_MESSAGE = `This browser has no built-in voice input. ${KEYBOARD_HINT}`;
 
-/** What to tell the user for each Web Speech error code. '' means stay quiet. */
-export function describeSpeechError(code: string, lang: SpeechLang): string {
+/**
+ * What to tell the user for each Web Speech error code. '' means stay quiet.
+ * `heard` says whether some words were already in the box when it happened.
+ */
+export function describeSpeechError(code: string, lang: SpeechLang, heard = false): string {
   switch (code) {
     case 'aborted':
-      return ''; // the user stopped it
+      // The app's own stop never reports this, so it came from outside —
+      // Android stops listening when you switch away from the app. With
+      // nothing heard nothing was lost; otherwise the text may stop mid-task.
+      return heard ? 'Voice input was cut off. Check the text, then tap Add.' : '';
     case 'no-speech':
       return 'Did not catch anything. Tap the mic and speak again.';
     case 'audio-capture':

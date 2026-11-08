@@ -35,7 +35,30 @@ export class LocalStoreError extends Error {
 
 function browserStore(): KeyValueStore {
   if (typeof window === 'undefined') throw new LocalStoreError('No browser storage here.');
-  return window.localStorage;
+  // Looked up on every call, not once here: when the browser blocks site data,
+  // merely touching window.localStorage throws, and this runs while the board
+  // renders. Inside getItem/setItem the error becomes a message instead.
+  return {
+    getItem: (key) => window.localStorage.getItem(key),
+    setItem: (key, value) => window.localStorage.setItem(key, value),
+  };
+}
+
+/**
+ * Whether this browser will keep anything at all. False when site data is
+ * blocked or storage is otherwise refused — then phone-only mode cannot work,
+ * and the choice screen says so instead of opening a board that cannot save.
+ */
+export function deviceStorageWorks(): boolean {
+  if (typeof window === 'undefined') return false;
+  const probe = 'smartask.probe';
+  try {
+    window.localStorage.setItem(probe, '1');
+    window.localStorage.removeItem(probe);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -81,12 +104,23 @@ export function readTasks(store: KeyValueStore): Task[] {
   try {
     const parsed = JSON.parse(raw) as { tasks?: unknown[] };
     const list = Array.isArray(parsed?.tasks) ? parsed.tasks : [];
-    return list.map(sanitizeStoredTask).filter((t): t is Task => t !== null);
+    // An older restore could store one id twice. Every edit finds tasks by id,
+    // so keep only the first: a tick or delete then acts on exactly one task.
+    return uniqueById(list.map(sanitizeStoredTask).filter((t): t is Task => t !== null));
   } catch {
     // Corrupt storage must not brick the app. Starting empty is recoverable
     // (restore a backup); a crash on every launch is not.
     return [];
   }
+}
+
+function uniqueById(tasks: Task[]): Task[] {
+  const seen = new Set<string>();
+  return tasks.filter((t) => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
 }
 
 function writeTasks(store: KeyValueStore, tasks: Task[]): void {
@@ -184,11 +218,16 @@ export function exportBackup(store: KeyValueStore = browserStore(), now = new Da
  * Merge a backup into what is already here. Tasks are matched by id, so
  * restoring the same file twice adds nothing, and restoring an old backup
  * never deletes tasks created since.
+ *
+ * `skipped` counts tasks already here — on the device, or earlier in the same
+ * file (a hand-merged backup can hold a task twice). `unreadable` counts
+ * entries too damaged to restore; they are reported apart, because during a
+ * recovery "already here" would wrongly say those tasks are safe.
  */
 export function importBackup(
   json: string,
   store: KeyValueStore = browserStore(),
-): { added: number; skipped: number } {
+): { added: number; skipped: number; unreadable: number } {
   let parsed: { format?: unknown; tasks?: unknown };
   try {
     parsed = JSON.parse(json);
@@ -202,10 +241,19 @@ export function importBackup(
   const existing = readTasks(store);
   const known = new Set(existing.map((t) => t.id));
   const incoming = parsed.tasks.map(sanitizeStoredTask).filter((t): t is Task => t !== null);
-  const fresh = incoming.filter((t) => !known.has(t.id));
+  const fresh: Task[] = [];
+  for (const task of incoming) {
+    if (known.has(task.id)) continue;
+    known.add(task.id);
+    fresh.push(task);
+  }
 
   writeTasks(store, [...existing, ...fresh]);
-  return { added: fresh.length, skipped: parsed.tasks.length - fresh.length };
+  return {
+    added: fresh.length,
+    skipped: incoming.length - fresh.length,
+    unreadable: parsed.tasks.length - incoming.length,
+  };
 }
 
 /**

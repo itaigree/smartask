@@ -211,7 +211,10 @@ Two things worth knowing:
   stored token. A custom domain gives this app its own origin and removes that.
   Set `NEXT_PUBLIC_BASE_PATH` to `''` in the workflow when you move to one.
 - **Anything that runs on the page can read the token.** That is the trade for
-  having no server. Use the ⏻ button to forget it on a shared device.
+  having no server. Use the ⏻ button to forget it on a shared device. It then
+  asks whether to forget the Gemini key and your custom categories too — say
+  yes on a shared device. Tasks are never deleted: Notion keeps its own, and
+  phone-only tasks stay on the device.
 
 If that trade is wrong for you, the app can be put back behind a server — the
 token then lives in an environment variable and never reaches the browser. See

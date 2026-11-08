@@ -208,7 +208,7 @@ export default function QuickAdd({
 
       {listening && (
         <p className="listening-hint" aria-live="polite">
-          Listening… stop talking when you are done, or tap the mic.
+          Listening in {SPEECH_LANGS[speechLang]}… stop talking when you are done, or tap the mic.
         </p>
       )}
 
@@ -268,15 +268,20 @@ export default function QuickAdd({
               </>
             )}
           </p>
-          <button
-            type="button"
-            className="lang-toggle"
-            onClick={switchSpeechLang}
-            title="Language for voice input"
-            aria-label={`Voice language: ${SPEECH_LANGS[speechLang]}. Tap to switch.`}
-          >
-            🎤 {SPEECH_LANGS[speechLang]}
-          </button>
+          {/* Not while listening: the recognizer already runs in the old
+              language, so a switch then would change only the label. The
+              listening hint names the language instead. */}
+          {!listening && (
+            <button
+              type="button"
+              className="lang-toggle"
+              onClick={switchSpeechLang}
+              title="Language for voice input"
+              aria-label={`Voice language: ${SPEECH_LANGS[speechLang]}. Tap to switch.`}
+            >
+              🎤 {SPEECH_LANGS[speechLang]}
+            </button>
+          )}
         </div>
       )}
     </form>

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { getRecognitionCtor, UNSUPPORTED_MESSAGE, type SpeechLang } from '../lib/speech.ts';
-import { startVoiceSession, type VoiceSession } from '../lib/voice-session.ts';
+import { openVoiceSession, type VoiceSession } from '../lib/voice-session.ts';
 
 export interface VoiceControl {
   /** Drop any session in progress without adding anything. */
@@ -72,15 +72,21 @@ export default function VoiceButton({
 
     onStart();
     setOn(true);
-    sessionRef.current = startVoiceSession(new Recognition(), lang, {
+    // If the recognizer cannot be built or started, the session ends before
+    // openVoiceSession returns: onEnd turns "listening" back off and null is
+    // stored, so the next tap tries again. Only the session in the slot may
+    // empty it.
+    let session: VoiceSession | null = null;
+    session = openVoiceSession(() => new Recognition(), lang, {
       onText: (t) => handlers.current.onText(t),
       onFinal: (t) => handlers.current.onFinal(t),
       onError: (m) => handlers.current.onError(m),
       onEnd: () => {
-        sessionRef.current = null;
+        if (sessionRef.current === session) sessionRef.current = null;
         setOn(false);
       },
     });
+    sessionRef.current = session;
   }
 
   return (

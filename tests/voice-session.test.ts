@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { startVoiceSession, type VoiceCallbacks } from '../src/lib/voice-session.ts';
+import {
+  openVoiceSession, startVoiceSession, type VoiceCallbacks, type VoiceSession,
+} from '../src/lib/voice-session.ts';
 import type { SpeechRecognitionLike } from '../src/lib/speech.ts';
 
 /** A recognizer we drive by hand, standing in for the browser's. */
@@ -161,4 +163,104 @@ test('a recognizer that refuses to start reports it and closes', () => {
   startVoiceSession(r, 'he-IL', callbacks, fakeClock());
   assert.equal(log.errors.length, 1);
   assert.equal(log.ends, 1);
+});
+
+/** The mic button's slot, as VoiceButton keeps it: one tap starts, the next finishes. */
+function micButton(make: () => SpeechRecognitionLike) {
+  const slot: { current: VoiceSession | null } = { current: null };
+  const { log, callbacks } = recorder();
+  return {
+    slot,
+    log,
+    tap() {
+      if (slot.current) {
+        slot.current.finish();
+        return;
+      }
+      let session: VoiceSession | null = null;
+      session = openVoiceSession(make, 'he-IL', {
+        ...callbacks,
+        onEnd: () => {
+          callbacks.onEnd();
+          if (slot.current === session) slot.current = null;
+        },
+      }, fakeClock());
+      slot.current = session;
+    },
+  };
+}
+
+test('R1-46: after a start that throws, the next tap tries again', () => {
+  const made: ReturnType<typeof fakeRecognizer>[] = [];
+  const mic = micButton(() => {
+    const r = fakeRecognizer();
+    if (made.length === 0) r.start = () => { throw new Error('busy'); };
+    made.push(r);
+    return r;
+  });
+
+  mic.tap();
+  assert.equal(mic.slot.current, null, 'no closed session is kept');
+  assert.equal(mic.log.errors.length, 1);
+  assert.equal(mic.log.ends, 1, 'listening is switched off again');
+
+  mic.tap();
+  assert.equal(made.length, 2, 'a fresh recognizer');
+  assert.equal(made[1].started, 1, 'and it is listening');
+  assert.notEqual(mic.slot.current, null);
+
+  made[1].say('לשלם', true);
+  assert.deepEqual(mic.log.final, ['לשלם']);
+  assert.equal(mic.slot.current, null, 'the ended session leaves the slot');
+});
+
+test('R1-46: a recognizer that cannot be built reports it and ends, so the box is not stuck listening', () => {
+  let attempts = 0;
+  const mic = micButton(() => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('not allowed here');
+    return fakeRecognizer();
+  });
+
+  mic.tap();
+  assert.equal(mic.slot.current, null);
+  assert.equal(mic.log.errors.length, 1);
+  assert.match(mic.log.errors[0], /keyboard/);
+  assert.equal(mic.log.ends, 1, 'onEnd turns "listening" off');
+
+  mic.tap();
+  assert.equal(attempts, 2);
+  assert.notEqual(mic.slot.current, null, 'the mic works on the next tap');
+});
+
+test('R1-47: cut off from outside (app hidden) with words heard, it says so', () => {
+  const r = fakeRecognizer();
+  const { log, callbacks } = recorder();
+  startVoiceSession(r, 'he-IL', callbacks, fakeClock());
+  r.say('לשלם חשבון');
+  r.fail('aborted'); // Android stops listening when you switch apps
+  r.end();
+  assert.deepEqual(log.final, [], 'never added by itself');
+  assert.equal(log.errors.length, 1);
+  assert.match(log.errors[0], /cut off/);
+  assert.equal(log.ends, 1);
+});
+
+test('R1-47: an abort before any words stays quiet — nothing was lost', () => {
+  const r = fakeRecognizer();
+  const { log, callbacks } = recorder();
+  startVoiceSession(r, 'he-IL', callbacks, fakeClock());
+  r.fail('aborted');
+  assert.deepEqual(log.errors, []);
+  assert.equal(log.ends, 1);
+});
+
+test('R1-47: the app\'s own cancel never shows the cut-off message', () => {
+  const r = fakeRecognizer();
+  const { log, callbacks } = recorder();
+  const session = startVoiceSession(r, 'he-IL', callbacks, fakeClock());
+  r.say('לשלם חשבון');
+  session.cancel();
+  r.fail('aborted'); // what abort() makes the browser send
+  assert.deepEqual(log.errors, []);
 });

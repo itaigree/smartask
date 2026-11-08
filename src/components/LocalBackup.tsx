@@ -14,7 +14,16 @@ export default function LocalBackup({ onRestored }: { onRestored: () => void }) 
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
 
   function download() {
-    const json = exportBackup();
+    let json: string;
+    try {
+      json = exportBackup();
+    } catch (error) {
+      setNote({
+        ok: false,
+        text: error instanceof LocalStoreError ? error.message : 'Could not make a backup.',
+      });
+      return;
+    }
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -29,11 +38,17 @@ export default function LocalBackup({ onRestored }: { onRestored: () => void }) 
 
   async function restore(file: File) {
     try {
-      const { added, skipped } = importBackup(await file.text());
+      const { added, skipped, unreadable } = importBackup(await file.text());
+      const extras = [
+        skipped ? `${skipped} already here` : '',
+        unreadable ? `${unreadable} could not be read` : '',
+      ].filter(Boolean);
       setNote({
-        ok: true,
+        // Entries that could not be read are lost from this restore: say so in
+        // the warning colour, not as a plain success.
+        ok: unreadable === 0,
         text: `Restored ${added} ${added === 1 ? 'task' : 'tasks'}${
-          skipped ? ` (${skipped} already here)` : ''
+          extras.length ? ` (${extras.join(', ')})` : ''
         }.`,
       });
       onRestored();
