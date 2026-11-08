@@ -37,7 +37,11 @@ export default function TaskCard({
   }
 
   return (
-    <article className={`card${done ? ' done' : ''}${busy ? ' busy' : ''}`}>
+    <article
+      className={`card${done ? ' done' : ''}${busy ? ' busy' : ''}`}
+      // How the category sheet finds this card again, to hand focus back to its chip.
+      data-task-id={task.id}
+    >
       <button
         type="button"
         className="check"

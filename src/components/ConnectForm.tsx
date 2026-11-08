@@ -115,7 +115,8 @@ export default function ConnectForm({
         <p>
           Local storage belongs to the whole domain, not just this app. On a shared domain such
           as <code>github.io</code>, another site you host there could read it. Use a browser you
-          trust, and disconnect below when you are done on a shared device.
+          trust. On a shared device, tap <strong>⏻</strong> at the top of your task list when you
+          are done, to forget the token.
         </p>
       </div>
     </div>

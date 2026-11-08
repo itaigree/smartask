@@ -1,6 +1,8 @@
 /* SmartTask — plain CSS, no framework (PLAN.md decision 6). */
 
 :root {
+  /* Lets the browser draw its own parts (dropdowns, scrollbars) dark in dark mode. */
+  color-scheme: light dark;
   --bg: #f7f7f8;
   --surface: #ffffff;
   --surface-2: #f1f1f3;
@@ -15,14 +17,15 @@
   --radius: 12px;
   --shadow: 0 1px 2px rgba(16, 16, 24, 0.06), 0 4px 12px rgba(16, 16, 24, 0.04);
 
+  /* Chip text: each at least 4.5:1 on --surface-2, the chip's background. */
   --cat-Work: #3b5bdb;
-  --cat-Finance: #b48a00;
-  --cat-Health: #2b8a3e;
-  --cat-Errands: #d9480f;
-  --cat-Home: #845ef7;
+  --cat-Finance: #846500;
+  --cat-Health: #267936;
+  --cat-Errands: #bc3f0d;
+  --cat-Home: #7044f6;
   --cat-Learning: #c2255c;
-  --cat-Personal: #0c8599;
-  --cat-Inbox: #868e96;
+  --cat-Personal: #0a7485;
+  --cat-Inbox: #636b72;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -64,8 +67,12 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
-button, input, textarea { font: inherit; color: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+
+/* Keyboard focus moving back up the page stops below the sticky header, not
+   under it. The board keeps --header-height current (stickyHeader.ts). */
+html { scroll-padding-top: calc(var(--header-height, 64px) + 8px); }
 
 .shell {
   max-width: 680px;
@@ -186,17 +193,14 @@ button { cursor: pointer; }
 
 /* ---------------- tabs ---------------- */
 
+/* The tabs wrap rather than scroll: a strip that scrolls sideways hid Done
+   off the edge of a phone screen with nothing to say it was there. */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
   padding: 2px 0 10px;
-  margin: 0 -16px;
-  padding-inline: 16px;
 }
-
-.tabs::-webkit-scrollbar { display: none; }
 
 .tab {
   flex: 0 0 auto;
@@ -232,6 +236,13 @@ button { cursor: pointer; }
 
 .tab[aria-selected="true"] .tab-badge { background: var(--accent-soft); color: var(--accent); }
 .tab-badge.alert { background: var(--danger-soft); color: var(--danger); }
+
+/* Tighter on phones, so all five fit on one row at the common 360 px. */
+@media (max-width: 420px) {
+  .tabs { gap: 2px; }
+  .tab { padding: 6px; gap: 4px; }
+  .tab-badge { padding: 1px 5px; }
+}
 
 /* ---------------- groups & cards ---------------- */
 
@@ -344,7 +355,11 @@ button { cursor: pointer; }
   background: var(--surface-2);
   color: var(--muted);
   white-space: nowrap;
+  /* Never wider than the card: a long name is cut short instead. */
+  max-width: 100%;
 }
+
+.chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .chip.category { color: var(--chip-color, var(--muted)); }
 .chip.category::before {
@@ -405,6 +420,8 @@ button { cursor: pointer; }
   gap: 12px;
   align-items: flex-start;
 }
+
+.header .banner { margin: 10px 0 0; }
 
 /* ---------------- setup screen ---------------- */
 
@@ -687,8 +704,9 @@ button { cursor: pointer; }
 
 /* ---------------- editable category & picker ---------------- */
 
-/* Custom categories: hue from the name, lightness per theme. */
-.chip.category.custom { color: hsl(var(--chip-hue) 55% 38%); }
+/* Custom categories: hue from the name, lightness per theme. 28% is the
+   lightest that keeps every hue at 4.5:1 or more on the chip background. */
+.chip.category.custom { color: hsl(var(--chip-hue) 55% 28%); }
 @media (prefers-color-scheme: dark) {
   .chip.category.custom { color: hsl(var(--chip-hue) 70% 72%); }
 }
@@ -703,17 +721,14 @@ button.chip.editable {
 button.chip.editable:hover { border-color: currentColor; }
 .chip-caret { font-size: 9px; opacity: 0.6; margin-left: 1px; }
 
-.sheet-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(10, 10, 14, 0.42);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-
+/* A modal <dialog>. The browser draws one as a box in the middle of the
+   screen; these make it a sheet along the bottom edge. */
 .sheet {
+  position: fixed;
+  inset: auto 0 0;
+  margin: 0 auto;
+  border: none;
+  color: var(--text);
   width: 100%;
   max-width: 680px;
   max-height: 80vh;
@@ -725,6 +740,8 @@ button.chip.editable:hover { border-color: currentColor; }
   outline: none;
   animation: sheet-in 160ms ease-out;
 }
+
+.sheet::backdrop { background: rgba(10, 10, 14, 0.42); }
 
 @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
@@ -739,7 +756,7 @@ button.chip.editable:hover { border-color: currentColor; }
 }
 
 .category-options { display: flex; flex-wrap: wrap; gap: 8px; }
-.category-option { display: inline-flex; align-items: center; }
+.category-option { display: inline-flex; align-items: center; max-width: 100%; }
 
 .option {
   display: inline-flex;
@@ -749,8 +766,12 @@ button.chip.editable:hover { border-color: currentColor; }
   background: var(--bg);
   border-radius: 999px;
   padding: 4px 6px 4px 4px;
+  max-width: 100%;
+  text-align: start;
 }
-.option .chip { font-size: 13.5px; padding: 4px 11px; }
+.option .chip { font-size: 13.5px; padding: 4px 11px; min-width: 0; }
+/* Here, where a category is being chosen, a long name wraps and shows in full. */
+.option .chip-label { white-space: normal; overflow-wrap: anywhere; }
 .option:hover { border-color: var(--accent); }
 .option.current { border-color: var(--accent); background: var(--accent-soft); }
 .option-check { color: var(--accent); font-weight: 700; font-size: 13px; padding-right: 4px; }

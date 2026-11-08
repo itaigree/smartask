@@ -19,6 +19,7 @@ import {
 import { buildView, countTasks, daysUntilDue, type ViewId } from '../lib/views.ts';
 import { dueLabel } from './Chips.tsx';
 import QuickAdd from './QuickAdd.tsx';
+import { trackHeaderHeight } from './stickyHeader.ts';
 import TaskCard from './TaskCard.tsx';
 import ViewTabs from './ViewTabs.tsx';
 
@@ -516,7 +517,7 @@ export default function TaskBoard({
 
   return (
     <>
-      <header className="header">
+      <header className="header" ref={trackHeaderHeight}>
         <div className="header-row">
           <h1 className="brand">
             Smart<span>Task</span>
@@ -550,6 +551,7 @@ export default function TaskBoard({
                 onClick={refresh}
                 disabled={refreshing}
                 title="Re-read from Notion"
+                aria-label="Refresh from Notion"
               >
                 {refreshing ? '…' : '↻'}
               </button>
@@ -568,11 +570,28 @@ export default function TaskBoard({
                 if (confirm(message)) onLeave();
               }}
               title={isLocal ? 'Change where tasks are stored' : 'Forget the token on this device'}
+              aria-label={isLocal ? 'Change where tasks are stored' : 'Forget Notion token'}
             >
               ⏻
             </button>
           </div>
         </div>
+
+        {/* In the sticky header, so a tick or delete that failed and was put
+            back is explained on screen however far down the list it was. */}
+        {writeError && (
+          <div className="banner" role="alert">
+            <span>{writeError.text}</span>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setWriteError(null)}
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </header>
 
       <QuickAdd onCreate={create} busy={creating} aiEnabled={aiEnabled} />
@@ -628,20 +647,6 @@ export default function TaskBoard({
           </span>
           <button type="button" className="icon-button" onClick={() => void refresh()}>
             retry
-          </button>
-        </div>
-      )}
-
-      {writeError && (
-        <div className="banner" role="alert">
-          <span>{writeError.text}</span>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => setWriteError(null)}
-            aria-label="Dismiss"
-          >
-            ✕
           </button>
         </div>
       )}

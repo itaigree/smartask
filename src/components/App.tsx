@@ -23,6 +23,7 @@ import ConnectForm from './ConnectForm.tsx';
 import LocalBackup from './LocalBackup.tsx';
 import StorageChoice from './StorageChoice.tsx';
 import TaskBoard from './TaskBoard.tsx';
+import { useCloseOnBack } from './useCloseOnBack.ts';
 
 /**
  * Top of the client-only app. Decides which store holds the tasks — Notion or
@@ -123,6 +124,12 @@ export default function App() {
     // `revision` is a deliberate extra dependency: a restore bumps it so a fresh
     // repository is built and the board reloads what was restored.
   }, [mode, config, categorizer, revision]);
+
+  // Android's back gesture closes AI settings or the Connect form — keeping
+  // the board, or the storage choice, behind it — instead of leaving the app.
+  const showingBoard = Boolean(mode && repo);
+  useCloseOnBack(showAi && showingBoard, () => setShowAi(false));
+  useCloseOnBack(connecting && !showingBoard, () => setConnecting(false));
 
   function chooseLocal() {
     setLocalChosen(true);

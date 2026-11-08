@@ -15,6 +15,19 @@ function categoryStyle(category: Category): React.CSSProperties {
     : ({ '--chip-hue': categoryHue(category) } as React.CSSProperties);
 }
 
+/**
+ * A chip's text. A long category or tag is cut short with an ellipsis rather
+ * than pushing the card wider than the screen; hovering shows it all, and the
+ * category sheet shows it in full.
+ */
+function ChipLabel({ text }: { text: string }) {
+  return (
+    <span className="chip-label" title={text}>
+      {text}
+    </span>
+  );
+}
+
 export function CategoryChip({
   category,
   onClick,
@@ -27,7 +40,7 @@ export function CategoryChip({
   if (!onClick) {
     return (
       <span className={className} style={categoryStyle(category)} dir="auto">
-        {category}
+        <ChipLabel text={category} />
       </span>
     );
   }
@@ -40,7 +53,7 @@ export function CategoryChip({
       aria-label={`Category: ${category}. Tap to change.`}
       dir="auto"
     >
-      {category}
+      <ChipLabel text={category} />
       <span className="chip-caret" aria-hidden="true">▾</span>
     </button>
   );
@@ -73,9 +86,17 @@ export function DueChip({ due, daysAway }: { due: string; daysAway: number | nul
 }
 
 export function ProjectChip({ project }: { project: string }) {
-  return <span className="chip project">{project}</span>;
+  return (
+    <span className="chip project" dir="auto">
+      <ChipLabel text={project} />
+    </span>
+  );
 }
 
 export function TagChip({ tag }: { tag: string }) {
-  return <span className="chip tag">{tag}</span>;
+  return (
+    <span className="chip tag" dir="auto">
+      <ChipLabel text={tag} />
+    </span>
+  );
 }
