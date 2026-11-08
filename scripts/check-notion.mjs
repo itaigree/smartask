@@ -10,7 +10,10 @@
 // The Notion SDK is CommonJS, so Node's ESM loader cannot name-import from it.
 import notionSdk from '@notionhq/client';
 const { Client } = notionSdk;
-import { loadEnv, normalizeId, describeFailure, ok, bad, warn, info } from './lib/env.mjs';
+import {
+  loadEnv, normalizeId, describeFailure, tokenProblem, ok, bad, warn, info,
+} from './lib/env.mjs';
+// Importing a .ts file directly needs Node 22.18 or newer (package.json "engines").
 import { SCHEMA, PROPS } from '../src/lib/notion-mapping.ts';
 
 loadEnv();
@@ -38,6 +41,14 @@ if (!token) {
   info('Put it in .env.local. Create one at https://www.notion.so/my-integrations');
   process.exit(1);
 }
+// Before any request: Node will not send such a token, and its error looks
+// like a network failure.
+const problem = tokenProblem(token);
+if (problem) {
+  fail(problem.summary);
+  problem.advice.forEach(info);
+  process.exit(1);
+}
 if (!/^(ntn_|secret_)/.test(token)) {
   warn('NOTION_TOKEN does not start with "ntn_" or "secret_" — check you copied the');
   info('Internal Integration Secret, not the integration id or a database link.');
@@ -63,10 +74,17 @@ try {
 /* 2 — the database ---------------------------------------------------- */
 
 console.log('\n2. Tasks database');
-const databaseId = normalizeId(process.env.NOTION_DATABASE_ID);
+const rawDatabaseId = process.env.NOTION_DATABASE_ID?.trim();
+const databaseId = normalizeId(rawDatabaseId);
+
+if (rawDatabaseId && !databaseId) {
+  fail('NOTION_DATABASE_ID has no Notion id in it.');
+  info('Paste the database link from Notion ("Copy link"), or the 32-character id at its end.');
+  process.exit(1);
+}
 
 if (!databaseId) {
-  warn('NOTION_DATABASE_ID is not set — the app will show its setup screen.');
+  warn('NOTION_DATABASE_ID is not set.');
 
   const parentId = normalizeId(process.env.NOTION_PARENT_PAGE_ID);
   if (!parentId) {
@@ -175,9 +193,11 @@ try {
   fail(`Query failed (${error?.code ?? 'error'}): ${error?.message ?? error}`);
 }
 
+// The app reads nothing from .env.local: the token and link are typed into it.
 console.log(
   failed
     ? '\n\x1b[31mSomething is not right — see the ✗ lines above.\x1b[0m\n'
-    : '\n\x1b[32mNotion is connected correctly. Run `npm run dev`.\x1b[0m\n',
+    : '\n\x1b[32mNotion is connected correctly.\x1b[0m\n' +
+      'In the app, choose "Sync with Notion" and paste the same token and the database link.\n',
 );
 process.exit(failed ? 1 : 0);

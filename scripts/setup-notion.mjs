@@ -11,7 +11,7 @@
 // The Notion SDK is CommonJS, so Node's ESM loader cannot name-import from it.
 import notionSdk from '@notionhq/client';
 const { Client } = notionSdk;
-import { loadEnv, normalizeId, describeFailure } from './lib/env.mjs';
+import { loadEnv, normalizeId, describeFailure, tokenProblem } from './lib/env.mjs';
 
 loadEnv();
 
@@ -35,6 +35,11 @@ function fail(message) {
 
 const token = process.env.NOTION_TOKEN?.trim();
 if (!token) fail('NOTION_TOKEN is not set. Create an integration at https://www.notion.so/my-integrations');
+
+// Before any request: Node will not send such a token, and its error looks
+// like a network failure.
+const problem = tokenProblem(token);
+if (problem) fail([problem.summary, ...problem.advice.map((line) => `  ${line}`)].join('\n'));
 
 const parentId = normalizeId(process.env.NOTION_PARENT_PAGE_ID);
 if (!parentId) {
@@ -76,6 +81,9 @@ try {
 }
 
 console.log('\n✓ Database created.\n');
-console.log('  Add this to .env.local:\n');
+console.log('  Add this to .env.local, for npm run check:notion:\n');
 console.log(`  NOTION_DATABASE_ID=${database.id}\n`);
 if (database.url) console.log(`  Open it in Notion: ${database.url}\n`);
+// The app reads nothing from .env.local: the token and link are typed into it.
+console.log('  In the app, choose "Sync with Notion" and paste your token and the');
+console.log('  database link (or the id above).\n');

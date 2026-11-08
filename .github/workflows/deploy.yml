@@ -1,8 +1,10 @@
 # Builds the static site and publishes it to GitHub Pages on every push to main.
 #
-# This enables GitHub Pages itself on the first run. If that is blocked by an
-# organisation policy, set it by hand: Settings → Pages → Build and deployment →
-# Source: "GitHub Actions", then re-run this workflow.
+# One-time step, by hand, before the first run (on a new repository or a fork):
+# Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# The workflow cannot do this itself: turning Pages on needs admin rights that
+# the workflow's own token never has. Until it is done, the first step below
+# stops the run and says so.
 name: Deploy to GitHub Pages
 
 on:
@@ -24,6 +26,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Checked first, so a repository without Pages fails here with the fix,
+      # not after the whole test and build.
+      - name: Check GitHub Pages is turned on
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! build_type=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type 2>&1); then
+            if [[ "$build_type" == *"HTTP 404"* ]]; then
+              echo "::error title=GitHub Pages is not turned on::Turn it on once by hand: Settings → Pages → Build and deployment → Source: GitHub Actions. Then re-run this workflow."
+              exit 1
+            fi
+            # Some other failure to ask: let the deploy steps give the verdict.
+            echo "::warning title=Could not check GitHub Pages::$build_type"
+          elif [[ "$build_type" != "workflow" ]]; then
+            echo "::warning title=GitHub Pages publishes from a branch::The site may keep showing that branch instead of this build. Set Settings → Pages → Build and deployment → Source to GitHub Actions."
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -42,11 +61,7 @@ jobs:
           # repository does not silently break every asset URL.
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
 
-      # enablement turns Pages on for the repository if it is not already,
-      # so the first deploy does not fail on a setting nobody remembered.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
