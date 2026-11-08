@@ -1,6 +1,6 @@
 import { captureDraft, ValidationError } from './capture.ts';
 import { getCategorizer, type Categorizer } from './categorize/index.ts';
-import { toISODate } from './parse.ts';
+import { localDateOf, toISODate } from './parse.ts';
 import type { CaptureResult, TaskRepository } from './tasks.ts';
 import {
   normalizeCategoryName, isPriority, isStatus,
@@ -48,7 +48,8 @@ export function sanitizeStoredTask(raw: unknown): Task | null {
   if (typeof t.id !== 'string' || !t.id) return null;
   if (typeof t.title !== 'string' || !t.title.trim()) return null;
 
-  const date = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v : null);
+  // A timestamp (a hand-edited backup, an older format) becomes its local day.
+  const date = localDateOf;
 
   return {
     id: t.id,

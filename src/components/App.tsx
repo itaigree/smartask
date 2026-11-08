@@ -6,7 +6,7 @@ import {
   setLocalChosen,
   type GeminiConfig, type NotionConfig,
 } from '../lib/config.ts';
-import { getCategorizer } from '../lib/categorize/index.ts';
+import { getCategorizer, type Categorizer, type CategorySignal } from '../lib/categorize/index.ts';
 import {
   categoryList, loadCustomCategories, saveCustomCategories,
 } from '../lib/categories.ts';
@@ -49,6 +49,21 @@ export default function App() {
   const categoriesRef = useRef<string[]>([]);
   categoriesRef.current = categoryList(customCategories);
 
+  // Categories Gemini has just created are offered straight away, before the
+  // saved task comes back and the list above catches up — so two tasks added
+  // in quick succession share one new category instead of inventing two.
+  const createdRef = useRef<string[]>([]);
+  const offeredCategories = useCallback(
+    () => categoryList([...categoriesRef.current, ...createdRef.current]),
+    [],
+  );
+  const rememberCreated = useCallback((signal: CategorySignal) => {
+    if (signal.created && !createdRef.current.includes(signal.category)) {
+      createdRef.current = [...createdRef.current, signal.category];
+    }
+    return signal;
+  }, []);
+
   // Local storage is not available while the page is being prerendered at build
   // time, so everything is read after mount. `ready` keeps the first-launch
   // screen from flashing in front of someone who is already set up.
@@ -72,22 +87,23 @@ export default function App() {
    * Gemini classifies when a key is present, and the keyword rules stand behind
    * it: a failed request must never stop a task being saved.
    */
-  const categorizer = useMemo(
-    () =>
-      gemini
-        ? createGeminiCategorizer(gemini, getCategorizer(), undefined, () => categoriesRef.current)
-        : getCategorizer(),
-    [gemini],
-  );
+  const categorizer = useMemo((): Categorizer => {
+    if (!gemini) return getCategorizer();
+    const ai = createGeminiCategorizer(gemini, getCategorizer(), undefined, offeredCategories);
+    return {
+      name: ai.name,
+      categorize: async (input) => rememberCreated(await ai.categorize(input)),
+    };
+  }, [gemini, offeredCategories, rememberCreated]);
 
   /** For re-sorting Inbox: must throw on failure, never fall back to the rules. */
   const classify = useMemo(
     () =>
       gemini
-        ? (input: Parameters<typeof classifyWithGemini>[1]) =>
-            classifyWithGemini(gemini, input, categoriesRef.current)
+        ? async (input: Parameters<typeof classifyWithGemini>[1]) =>
+            rememberCreated(await classifyWithGemini(gemini, input, offeredCategories()))
         : null,
-    [gemini],
+    [gemini, offeredCategories, rememberCreated],
   );
 
   const repo = useMemo(() => {

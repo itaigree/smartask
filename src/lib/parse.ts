@@ -64,6 +64,37 @@ export function addDays(date: Date, days: number): Date {
 }
 
 /**
+ * Add calendar months, clamping the day to the target month's length, so
+ * "next month" on 31 January is 28 (or 29) February rather than 3 March.
+ */
+export function addMonths(date: Date, months: number): Date {
+  const year = date.getFullYear();
+  const month = date.getMonth() + months;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(date.getDate(), lastDay));
+}
+
+/**
+ * The local calendar day of a stored date, as `YYYY-MM-DD`.
+ *
+ * Notion returns a full timestamp when "Include time" is on
+ * (`2026-11-06T14:00:00.000+02:00`); the app works in whole days, so a
+ * timestamp becomes the day it falls on *here*. That is not always its first
+ * ten characters: a UTC time can belong to a different local day.
+ */
+export function localDateOf(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  const plain = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (plain) {
+    return makeDate(Number(plain[1]), Number(plain[2]) - 1, Number(plain[3])) ? text : null;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(text)) return null;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : toISODate(parsed);
+}
+
+/**
  * Days from `now` to the next occurrence of `weekday`.
  * Today counts as an occurrence, so on a Friday "friday" means today.
  */
@@ -71,203 +102,387 @@ function daysUntilWeekday(now: Date, weekday: number): number {
   return (weekday - now.getDay() + 7) % 7;
 }
 
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/** A real calendar date, or null for 31/02 or month 13 — never a silent rollover. */
+function makeDate(year: number, month: number, day: number): Date | null {
+  if (!Number.isInteger(year) || year < 1900 || year > 2200) return null;
+  if (month < 0 || month > 11 || day < 1 || day > 31) return null;
+  const date = new Date(year, month, day);
+  return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day
+    ? date
+    : null;
+}
+
+/**
+ * A day and month with no year: this year, or the first later year in which
+ * that day exists and has not passed — so 29/02 waits for the next leap year.
+ */
+function nextDayMonth(now: Date, month: number, day: number): Date | null {
+  const today = startOfDay(now);
+  for (let year = now.getFullYear(); year <= now.getFullYear() + 4; year++) {
+    const date = makeDate(year, month, day);
+    if (date && date >= today) return date;
+  }
+  return null;
+}
+
+/** `26` means 2026; only two- or four-digit years are accepted at all. */
+function fullYear(raw: string): number {
+  const n = Number(raw);
+  return raw.length === 2 ? 2000 + n : n;
+}
+
+/* ------------------------------------------------------------------ *
+ * Matching
+ *
+ * `\b` treats `/`, `-`, `'` and `?` as word edges, which made "today" inside
+ * a link or "today's" count as a date. These edges are stricter.
+ * ------------------------------------------------------------------ */
+
+/** Start and end of a word: not inside a longer word, a path, or a possessive. */
+const WS = "(?<![\\p{L}\\p{N}_'’/])";
+const WE = "(?![\\p{L}\\p{N}_/]|['’]\\p{L})";
+/**
+ * Start and end of a number. A Hebrew prefix letter or a hyphen may touch the
+ * start (ב10.11, ב-10/11); a Latin letter, another digit or a decimal point
+ * may not (v3.12, 1.5.2).
+ */
+const NS = "(?<![\\p{N}A-Za-z_/.:,'’])";
+const NE = "(?![\\p{N}A-Za-z_]|[./:,]\\p{N})";
+
+const MONTH_NAMES = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join('|');
+const WEEKDAY_NAMES = WEEKDAYS.join('|');
+
+/** Words after a number that make it a quantity, not a date: "1.5 ליטר", "1/2 kg". */
+const UNITS = [
+  'kg', 'g', 'gr', 'gram', 'grams', 'mg', 'l', 'lt', 'liter', 'liters', 'litre', 'litres',
+  'ml', 'km', 'm', 'cm', 'mm', 'lb', 'lbs', 'oz', 'kilo', 'kilos', 'cup', 'cups', 'tbsp',
+  'tsp', 'spoon', 'spoons', 'h', 'hr', 'hrs', 'hour', 'hours', 'min', 'mins', 'minute',
+  'minutes', 'sec', 'percent', 'pct', 'x', 'nis', 'ils', 'usd', 'eur', 'euro', 'euros',
+  'dollar', 'dollars', 'shekel', 'shekels',
+  'ליטר', 'ליטרים', 'קילו', 'ק"ג', 'קג', 'גרם', 'גר', 'מ"ל', 'מל', 'ק"מ', 'קמ', 'מטר',
+  'מטרים', 'ס"מ', 'סמ', 'מ"מ', 'שעה', 'שעות', 'דקה', 'דקות', 'ש"ח', 'שח', 'שקל', 'שקלים',
+  'אחוז', 'אחוזים', 'יחידות', 'כוס', 'כוסות', 'כף', 'כפות', 'כפית', 'כפיות', 'מנות',
+  'קופסאות', 'בקבוק', 'בקבוקים', 'חבילה', 'חבילות',
+];
+const UNIT_AFTER = new RegExp(`^\\s*(?:[%₪$€£]|(?:${UNITS.join('|')})${WE})`, 'u');
+
+/** A clock time or a price, not a date: "at 9.05", "בשעה 9.30", "₪5.10". */
+const TIME_OR_MONEY_BEFORE = /(?:(?:^|\s)(?:at|@|בשעה|שעה)\s*|[₪$€£]\s*)$/u;
+
+/** English words that can sit right before a date: "pay rent by 25.12". */
+const DATE_WORDS_BEFORE = new Set([
+  'on', 'by', 'due', 'before', 'until', 'till', 'til', 'for', 'from', 'after', 'since', 'to',
+]);
+
+/**
+ * Is a day/month with no year really meant as a date?
+ *
+ * A bare `1.5` is far more often a quantity, a version or a price than the
+ * first of May, and a wrong date is worse than a missed one: a missed date
+ * keeps the text in the title, and Gemini can still read it. So when in doubt,
+ * this says no.
+ */
+function plausibleDayMonth(text: string, start: number, end: number, separator: string): boolean {
+  const before = text.slice(0, start);
+  if (UNIT_AFTER.test(text.slice(end))) return false;
+  if (TIME_OR_MONEY_BEFORE.test(before)) return false;
+  if (separator === '.') {
+    // "python 3.12", "pay 5.10": a dotted number right after an English word is
+    // a version or an amount. Hebrew writes dates this way (פגישה 25.12), English rarely does.
+    const word = /(?:^|\s)([a-z][a-z0-9'’]*)\s*$/.exec(before);
+    if (word && !DATE_WORDS_BEFORE.has(word[1])) return false;
+  }
+  return true;
+}
+
+type Builder = (m: RegExpExecArray, text: string) => Date | null;
+
+/** Ordered date matchers. The first one that yields a real date wins. */
+function dateMatchers(now: Date): Array<[RegExp, Builder]> {
+  const re = (source: string) => new RegExp(source, 'gu');
+  return [
+    // Explicit ISO date: 2026-12-25
+    [re(`${NS}(\\d{4})-(\\d{2})-(\\d{2})${NE}`), (m) =>
+      makeDate(Number(m[1]), Number(m[2]) - 1, Number(m[3]))],
+
+    // Day/month with a year: 25/12/2026, 25.12.26
+    [re(`${NS}(\\d{1,2})([./])(\\d{1,2})\\2(\\d{4}|\\d{2})${NE}`), (m) =>
+      makeDate(fullYear(m[4]), Number(m[3]) - 1, Number(m[1]))],
+
+    // "dec 25", "december 25th, 2027"
+    [re(`${WS}(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?${NE}`), (m) =>
+      m[3]
+        ? makeDate(Number(m[3]), MONTHS[m[1]], Number(m[2]))
+        : nextDayMonth(now, MONTHS[m[1]], Number(m[2]))],
+    // "25 dec", "3rd of march 2028"
+    [re(`${NS}(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_NAMES})\\.?(?:,?\\s+(\\d{4}))?${WE}`), (m) =>
+      m[3]
+        ? makeDate(Number(m[3]), MONTHS[m[2]], Number(m[1]))
+        : nextDayMonth(now, MONTHS[m[2]], Number(m[1]))],
+
+    // Relative words
+    [re(`${WS}day after tomorrow${WE}`), () => addDays(now, 2)],
+    [re(`${WS}(?:today|tonight|this evening)${WE}`), () => addDays(now, 0)],
+    [re(`${WS}(?:tomorrow|tmrw?|tmw)${WE}`), () => addDays(now, 1)],
+    [re(`${WS}next week${WE}`), () => addDays(now, 7)],
+    [re(`${WS}next month${WE}`), () => addMonths(startOfDay(now), 1)],
+    [re(`${WS}in (\\d{1,3}) (days?|weeks?|months?)${WE}`), (m) => {
+      const n = Number(m[1]);
+      if (m[2].startsWith('day')) return addDays(now, n);
+      if (m[2].startsWith('week')) return addDays(now, n * 7);
+      return addMonths(startOfDay(now), n);
+    }],
+    [re(`${WS}in a (day|week|month)${WE}`), (m) => {
+      if (m[1] === 'day') return addDays(now, 1);
+      if (m[1] === 'week') return addDays(now, 7);
+      return addMonths(startOfDay(now), 1);
+    }],
+
+    // "next friday" = the following occurrence plus a week.
+    [re(`${WS}next (sun|mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat)(?:day|nesday|rsday|urday)?${WE}`), (m) => {
+      const wd = WEEKDAY_ALIASES[m[1]];
+      return wd === undefined ? null : addDays(now, daysUntilWeekday(now, wd) + 7);
+    }],
+
+    // "friday" / "on friday" / "by friday" = next occurrence, today included.
+    [re(`${WS}(?:(?:on|by|due)\\s+)?(${WEEKDAY_NAMES})${WE}`), (m) => {
+      const wd = WEEKDAY_ALIASES[m[1]];
+      return wd === undefined ? null : addDays(now, daysUntilWeekday(now, wd));
+    }],
+
+    // Day/month with no year — last, because it is the most ambiguous:
+    // 25/12, 25.12, ב-10/11. "tomorrow" elsewhere in the text beats it.
+    [re(`${NS}(\\d{1,2})([./])(\\d{1,2})${NE}`), (m, text) => {
+      if (!plausibleDayMonth(text, m.index, m.index + m[0].length, m[2])) return null;
+      return nextDayMonth(now, Number(m[3]) - 1, Number(m[1]));
+    }],
+  ];
+}
+
+/**
+ * Words that introduce a date and should leave with it: "by 25/12",
+ * "עד 10/11", "ב-10/11", "ב10.11", "עד ה-15/11". Matched against the text
+ * just before the date, so a title that merely *ends* in "on" keeps it.
+ */
+const LEAD_IN =
+  /(?<=^|\s)(?:(?:by|on|at|due|before|until|till)\s+|(?:עד|בתאריך|ביום|תאריך)\s*(?:ה\s*[-־]?\s*)?|ו?[בלמה]\s*[-־]?\s*)$/u;
+
 interface DateMatch {
   due: string;
   start: number;
   end: number;
 }
 
-/** Ordered date matchers. The first one that matches wins. */
 function matchDate(text: string, now: Date): DateMatch | null {
-  const matchers: Array<[RegExp, (m: RegExpExecArray) => Date | null]> = [
-    // Explicit ISO date: 2026-12-25
-    [/\b(\d{4})-(\d{2})-(\d{2})\b/, (m) =>
-      new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))],
-
-    // Day/month, optional year: 25/12, 25.12.2026, 25-12
-    [/\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b/, (m) => {
-      const day = Number(m[1]);
-      const month = Number(m[2]) - 1;
-      if (day < 1 || day > 31 || month < 0 || month > 11) return null;
-      let year = m[3] ? Number(m[3]) : now.getFullYear();
-      if (year < 100) year += 2000;
-      const candidate = new Date(year, month, day);
-      // A bare day/month that already passed means next year.
-      if (!m[3] && candidate < startOfDay(now)) candidate.setFullYear(year + 1);
-      return candidate;
-    }],
-
-    // "dec 25" / "25 dec" / "december 25th"
-    [/\b([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\b/, (m) => {
-      const month = MONTHS[m[1]];
-      if (month === undefined) return null;
-      return monthDay(now, month, Number(m[2]));
-    }],
-    [/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([a-z]{3,9})\b/, (m) => {
-      const month = MONTHS[m[2]];
-      if (month === undefined) return null;
-      return monthDay(now, month, Number(m[1]));
-    }],
-
-    // Relative words
-    [/\b(?:day after tomorrow)\b/, () => addDays(now, 2)],
-    [/\b(?:today|tonight|this evening)\b/, () => addDays(now, 0)],
-    [/\b(?:tomorrow|tmrw?|tmw)\b/, () => addDays(now, 1)],
-    [/\bnext week\b/, () => addDays(now, 7)],
-    [/\bnext month\b/, () => {
-      const d = startOfDay(now);
-      d.setMonth(d.getMonth() + 1);
-      return d;
-    }],
-    [/\bin (\d{1,3}) (day|days|week|weeks|month|months)\b/, (m) => {
-      const n = Number(m[1]);
-      const unit = m[2];
-      if (unit.startsWith('day')) return addDays(now, n);
-      if (unit.startsWith('week')) return addDays(now, n * 7);
-      const d = startOfDay(now);
-      d.setMonth(d.getMonth() + n);
-      return d;
-    }],
-    [/\bin a (day|week|month)\b/, (m) => {
-      if (m[1] === 'day') return addDays(now, 1);
-      if (m[1] === 'week') return addDays(now, 7);
-      const d = startOfDay(now);
-      d.setMonth(d.getMonth() + 1);
-      return d;
-    }],
-
-    // "next friday" = the following occurrence plus a week.
-    [/\bnext (sun|mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat)(?:day|nesday|rsday|urday)?\b/, (m) => {
-      const wd = WEEKDAY_ALIASES[m[1]];
-      if (wd === undefined) return null;
-      return addDays(now, daysUntilWeekday(now, wd) + 7);
-    }],
-
-    // "friday" / "on friday" / "by friday" = next occurrence, today included.
-    [/\b(?:on |by |due )?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/, (m) => {
-      const wd = WEEKDAY_ALIASES[m[1]];
-      if (wd === undefined) return null;
-      return addDays(now, daysUntilWeekday(now, wd));
-    }],
-  ];
-
-  for (const [re, build] of matchers) {
-    const m = re.exec(text);
-    if (!m) continue;
-    const date = build(m);
-    if (!date || Number.isNaN(date.getTime())) continue;
-    return { due: toISODate(date), start: m.index, end: m.index + m[0].length };
+  for (const [re, build] of dateMatchers(now)) {
+    for (const m of text.matchAll(re)) {
+      const date = build(m as RegExpExecArray, text);
+      if (!date || Number.isNaN(date.getTime())) continue;
+      const index = m.index ?? 0;
+      const leadIn = LEAD_IN.exec(text.slice(0, index));
+      return {
+        due: toISODate(date),
+        start: leadIn ? leadIn.index : index,
+        end: index + m[0].length,
+      };
+    }
   }
   return null;
 }
 
-function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
+/* ------------------------------------------------------------------ *
+ * Priority
+ * ------------------------------------------------------------------ */
 
-/** A month/day in the current year, rolled to next year if already past. */
-function monthDay(now: Date, month: number, day: number): Date | null {
-  if (day < 1 || day > 31) return null;
-  const candidate = new Date(now.getFullYear(), month, day);
-  if (candidate < startOfDay(now)) candidate.setFullYear(now.getFullYear() + 1);
-  return candidate;
-}
-
-const PRIORITY_WORDS: Array<[RegExp, Priority]> = [
-  [/\b(?:urgent|asap|critical|emergency|now!)\b/, 'Urgent'],
-  [/\b(?:important|high priority|soon)\b/, 'High'],
-  [/\b(?:someday|whenever|eventually|low priority|no rush|backlog)\b/, 'Low'],
+/** Unambiguous wherever they appear: nobody writes "asap" by accident. */
+const PRIORITY_PHRASES: Array<[RegExp, Priority]> = [
+  [new RegExp(`${WS}(?:asap|as soon as possible|top priority)${WE}`, 'u'), 'Urgent'],
+  [new RegExp(`${WS}now!+(?=\\s|$)`, 'u'), 'Urgent'],
+  [new RegExp(`${WS}high priority${WE}`, 'u'), 'High'],
+  [new RegExp(`${WS}(?:low priority|no rush|no hurry)${WE}`, 'u'), 'Low'],
 ];
 
-function matchPriority(text: string): { priority: Priority; spans: Array<[number, number]> } {
-  const spans: Array<[number, number]> = [];
-  let priority: Priority = 'Normal';
+/**
+ * Ordinary words that only mean a priority when they stand at the start or
+ * the end of the task: "Urgent: call the bank", "call the plumber, not
+ * urgent" — but not "buy emergency kit" or "file important documents".
+ */
+const PRIORITY_MARKERS: Array<[RegExp, Priority]> = [
+  [new RegExp(`${WS}(?:(?:not|isn'?t|is not|nothing)\\s+(?:very\\s+|that\\s+|so\\s+)?(?:urgent|important|critical))${WE}`, 'u'), 'Low'],
+  [new RegExp(`${WS}(?:urgent|critical|emergency)${WE}`, 'u'), 'Urgent'],
+  [new RegExp(`${WS}(?:important|soon)${WE}`, 'u'), 'High'],
+  [new RegExp(`${WS}(?:someday|whenever|eventually)${WE}`, 'u'), 'Low'],
+];
 
-  // Bang notation wins: `!` high, `!!`+ urgent.
-  const bang = /(?:^|\s)(!{1,3})(?=\s|$)/.exec(text);
+/** A #project or @tag that names a priority sets it too: `@urgent`, `#asap`. */
+const PRIORITY_TOKENS: Record<string, Priority> = {
+  urgent: 'Urgent', asap: 'Urgent', critical: 'Urgent', emergency: 'Urgent',
+  important: 'High', high: 'High',
+  low: 'Low', someday: 'Low',
+};
+
+const EDGE = /^[\s\p{P}\p{S}]*$/u;
+
+function matchPriority(text: string): { priority: Priority; spans: Span[] } {
+  // Bang notation wins: `!` high, `!!` or more urgent.
+  const bang = /(?:^|\s)(!+)(?=\s|$)/.exec(text);
   if (bang) {
-    priority = bang[1].length >= 2 ? 'Urgent' : 'High';
     const at = bang.index + bang[0].indexOf('!');
-    spans.push([at, at + bang[1].length]);
-    return { priority, spans };
+    return {
+      priority: bang[1].length >= 2 ? 'Urgent' : 'High',
+      spans: [[at, at + bang[1].length]],
+    };
   }
 
-  for (const [re, level] of PRIORITY_WORDS) {
+  for (const [re, level] of PRIORITY_PHRASES) {
     const m = re.exec(text);
-    if (m) {
-      priority = level;
-      spans.push([m.index, m.index + m[0].length]);
-      break;
+    if (m) return { priority: level, spans: [[m.index, m.index + m[0].length]] };
+  }
+
+  for (const [re, level] of PRIORITY_MARKERS) {
+    const global = new RegExp(re.source, 'gu');
+    for (const m of text.matchAll(global)) {
+      const start = m.index ?? 0;
+      const end = start + m[0].length;
+      if (EDGE.test(text.slice(0, start)) || EDGE.test(text.slice(end))) {
+        return { priority: level, spans: [[start, end]] };
+      }
     }
   }
-  return { priority, spans };
+  return { priority: 'Normal', spans: [] };
 }
 
-function cutSpans(text: string, spans: Array<[number, number]>): string {
-  const sorted = [...spans].sort((a, b) => b[0] - a[0]);
+/* ------------------------------------------------------------------ *
+ * Cutting
+ * ------------------------------------------------------------------ */
+
+type Span = [number, number];
+
+/**
+ * Blank out spans with spaces of the same length, so every index into the
+ * result is still an index into the original. (Replacing each span with one
+ * space shifted later positions and cut dates out of the wrong place.)
+ */
+function blank(text: string, spans: Span[]): string {
   let out = text;
-  for (const [start, end] of sorted) {
+  for (const [start, end] of spans) {
+    out = out.slice(0, start) + ' '.repeat(end - start) + out.slice(end);
+  }
+  return out;
+}
+
+/** Lowercase without changing the length ('İ' lowercases to two characters). */
+function lowerSameLength(text: string): string {
+  return text
+    .split('')
+    .map((c) => {
+      const lower = c.toLowerCase();
+      return lower.length === 1 ? lower : c;
+    })
+    .join('');
+}
+
+/** Remove spans from `text`, merging any that overlap or touch first. */
+function cutSpans(text: string, spans: Span[]): string {
+  const merged: Span[] = [];
+  for (const [start, end] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  let out = text;
+  for (const [start, end] of merged.reverse()) {
     out = out.slice(0, start) + ' ' + out.slice(end);
   }
   return out;
 }
 
-/** Trim filler words a date phrase leaves behind ("call bank on" -> "call bank"). */
+/** Tidy what is left once tokens and the date are gone. */
 function tidyTitle(raw: string): string {
   return raw
     .replace(/\s+/g, ' ')
-    .replace(/\s*([,;:-])\s*$/, '')
-    .replace(/\b(?:by|on|at|due|before|until|till)\s*$/i, '')
-    .replace(/^\s*(?:and|then|also)\b\s*/i, '')
-    .replace(/\s+/g, ' ')
+    .replace(/\s+([,;:.!?])/g, '$1')
+    .replace(/^[\s,;:\-–—־]+/, '')
+    .replace(/[\s,;:\-–—־]+$/, '')
+    .replace(/^(?:and|then|also)\s+/i, '')
     .trim();
 }
+
+/** Links stay in the title, but nothing inside them is read as a date or priority. */
+const LINK = /(?:https?:\/\/|www\.)\S+|(?<![\p{L}\p{N}_@])[\p{L}\p{N}_-]+(?:\.[a-z][\w-]*)+\/\S*/giu;
+
+/**
+ * A #project or @tag name. Hebrew acronyms keep their quote mark even when the
+ * keyboard types a plain `"` or `'` (ביה"ס, עו"ד).
+ */
+const TOKEN = '((?:[\\wÀ-ɏ֐-׿-]|(?<=[֐-׿])["\'](?=[֐-׿]))+)';
 
 /**
  * Parse free text into a task draft.
  *
  * Syntax: `#project` sets the project, `@tag` adds a tag, `!`/`!!` set priority,
- * dates are recognised in plain English, and anything after a newline (or ` // `)
- * becomes the note.
+ * dates are recognised in plain English and in numeric form, and anything after
+ * a newline (or ` // `) becomes the note.
  */
 export function parseTask(input: string, now: Date = new Date()): ParsedDraft {
   const [headRaw, ...noteParts] = input.split(/\n|\s\/\/\s/);
   const note = noteParts.join('\n').trim() || null;
-  let head = headRaw ?? '';
+  const head = headRaw ?? '';
 
-  const spans: Array<[number, number]> = [];
+  // Everything is matched against `scan`: the head lowercased and, step by
+  // step, with already-claimed text blanked — always the same length as `head`.
+  let scan = lowerSameLength(head);
+  scan = blank(scan, [...scan.matchAll(LINK)].map((m) => [m.index!, m.index! + m[0].length]));
+
+  const cut: Span[] = [];
 
   // #project — last one wins.
   let project: string | null = null;
-  const projectRe = /(?:^|\s)#([\wÀ-ɏ֐-׿-]+)/g;
-  for (let m = projectRe.exec(head); m; m = projectRe.exec(head)) {
-    project = m[1];
-    const at = m.index + m[0].indexOf('#');
-    spans.push([at, at + m[1].length + 1]);
+  for (const m of scan.matchAll(new RegExp(`(?:^|\\s)#${TOKEN}`, 'gu'))) {
+    const at = m.index! + m[0].indexOf('#');
+    project = head.slice(at + 1, at + 1 + m[1].length);
+    cut.push([at, at + m[1].length + 1]);
   }
 
   // @tag — all of them, de-duplicated, order preserved.
   const tags: string[] = [];
-  const tagRe = /(?:^|\s)@([\wÀ-ɏ֐-׿-]+)/g;
-  for (let m = tagRe.exec(head); m; m = tagRe.exec(head)) {
-    if (!tags.includes(m[1])) tags.push(m[1]);
-    const at = m.index + m[0].indexOf('@');
-    spans.push([at, at + m[1].length + 1]);
+  for (const m of scan.matchAll(new RegExp(`(?:^|\\s)@${TOKEN}`, 'gu'))) {
+    const at = m.index! + m[0].indexOf('@');
+    const tag = head.slice(at + 1, at + 1 + m[1].length);
+    if (!tags.includes(tag)) tags.push(tag);
+    cut.push([at, at + m[1].length + 1]);
+  }
+  scan = blank(scan, cut);
+
+  // The date, on text with the tokens blanked, so `#dec` or `@25/12` is never a date.
+  const dateMatch = matchDate(scan, now);
+  if (dateMatch) {
+    cut.push([dateMatch.start, dateMatch.end]);
+    scan = blank(scan, [[dateMatch.start, dateMatch.end]]);
   }
 
-  const { priority, spans: prioritySpans } = matchPriority(head);
-  spans.push(...prioritySpans);
+  // Priority last, so "urgent" inside `@urgent` or a link is never a second cut.
+  const found = matchPriority(scan);
+  cut.push(...found.spans);
+  let priority = found.priority;
+  if (priority === 'Normal') {
+    for (const token of [...tags, project ?? '']) {
+      const level = PRIORITY_TOKENS[token.toLowerCase()];
+      if (level) {
+        priority = level;
+        break;
+      }
+    }
+  }
 
-  // Date matching runs on text with the tokens blanked out, so `#dec` or `@25/12`
-  // can never be read as a date, while indexes still line up with `head`.
-  const masked = cutSpans(head, spans).toLowerCase();
-  const dateMatch = matchDate(masked, now);
-  if (dateMatch) spans.push([dateMatch.start, dateMatch.end]);
-
-  const title = tidyTitle(cutSpans(head, spans));
+  const title = tidyTitle(cutSpans(head, cut));
 
   return {
-    title: title || tidyTitle(headRaw ?? '') || 'Untitled task',
+    title: title || tidyTitle(head) || 'Untitled task',
     due: dateMatch?.due ?? null,
     priority,
     project,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   pageToTask, newTaskToProperties, patchToProperties, PROPS, SCHEMA,
 } from '../src/lib/notion-mapping.ts';
+import { toISODate } from '../src/lib/parse.ts';
 import { CATEGORIES, PRIORITIES, STATUSES, type NewTask } from '../src/lib/types.ts';
 
 function page(properties: Record<string, unknown>, extra: Record<string, unknown> = {}) {
@@ -128,4 +129,29 @@ test('a category the user created — in the app or in Notion — is kept, not t
     [PROPS.category]: { select: { name: 'work' } },
   }));
   assert.equal(lower?.category, 'Work', 'a built-in in other casing is not a second category');
+});
+
+test('R1-2: a Notion date with "Include time" becomes the local day', () => {
+  const stamp = '2026-11-06T14:00:00.000+02:00';
+  const task = pageToTask(page({
+    [PROPS.title]: { title: [{ plain_text: 'timed' }] },
+    [PROPS.due]: { date: { start: stamp } },
+  }));
+  assert.equal(task?.due, toISODate(new Date(stamp)));
+  assert.match(task?.due ?? '', /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('R1-34: Completed is stamped with the local day, not the UTC one', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'Asia/Jerusalem';
+  // 22:30 UTC on Friday is 00:30 on Saturday in Israel.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-06T22:30:00Z') });
+  try {
+    const done = patchToProperties({ status: 'Done' }) as Record<string, any>;
+    assert.equal(done[PROPS.completedAt].date.start, '2026-11-07');
+  } finally {
+    t.mock.timers.reset();
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
 });

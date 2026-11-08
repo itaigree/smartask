@@ -4,7 +4,7 @@ import {
   buildPrompt, calendarLines, sanitizeExtraction,
   parseGeminiReply, extractText, describeGeminiError,
   scoreModel, pickDefaultModel, listGeminiModels, createGeminiCategorizer,
-  classifyWithGemini, GeminiError,
+  classifyWithGemini, GeminiError, acceptNewCategory,
 } from '../src/lib/categorize/gemini.ts';
 import { rulesCategorizer } from '../src/lib/categorize/rules.ts';
 import { CATEGORIES } from '../src/lib/types.ts';
@@ -290,4 +290,73 @@ test('a Hebrew task gets its date and a clean title from Gemini', async () => {
 
 test('a bare-word reply carries no extraction, rather than inventing one', () => {
   assert.equal(parseGeminiReply('Finance')?.extracted, undefined);
+});
+
+/* ---- Pick the best existing category, or create one ---- */
+
+test('the prompt lists the user\'s categories and asks for the best fit before a new one', () => {
+  const prompt = buildPrompt({ title: 'להאכיל את החתול' }, [...CATEGORIES, 'Research'], { allowNew: true });
+  assert.match(prompt, /- Research: the user's own category/);
+  assert.match(prompt, /pick the one that fits the\s+task best/);
+  assert.match(prompt, /Only if none of them fits, create a new category/);
+  assert.match(prompt, /Never create a category\s+that means the same as an existing one/);
+  assert.match(prompt, /"new": <true or false>/);
+  assert.match(prompt, /Inbox: LAST RESORT/);
+
+  const closed = buildPrompt({ title: 'x' });
+  assert.doesNotMatch(closed, /create a new category/, 'off unless asked for');
+});
+
+test('a new category is accepted only when it is short, clean and not a twin of an existing one', () => {
+  const existing = [...CATEGORIES, 'Car'];
+  assert.deepEqual(acceptNewCategory('Pets', existing), { name: 'Pets', created: true });
+  assert.deepEqual(acceptNewCategory('pets', existing), { name: 'Pets', created: true }, 'Title Case');
+  assert.deepEqual(acceptNewCategory('Cars', existing), { name: 'Car', created: false }, 'plural twin');
+  assert.deepEqual(acceptNewCategory('errand', existing), { name: 'Errands', created: false });
+  assert.deepEqual(acceptNewCategory('"Wedding".', existing), { name: 'Wedding', created: true });
+  assert.deepEqual(acceptNewCategory('חתונה', existing), { name: 'חתונה', created: true });
+  assert.equal(acceptNewCategory('Things To Do Around The House', existing), null, 'too many words');
+  assert.equal(acceptNewCategory('A'.repeat(30), existing), null, 'too long');
+  assert.equal(acceptNewCategory('Cats, dogs', existing), null, 'Notion refuses commas');
+  assert.equal(acceptNewCategory('2026', existing), null, 'no letters');
+  assert.equal(acceptNewCategory('', existing), null);
+  assert.equal(acceptNewCategory(42, existing), null);
+});
+
+test('the reply parser creates a category only when allowed', () => {
+  const created = parseGeminiReply('{"category":"Pets","new":true,"confidence":0.9}', CATEGORIES, { allowNew: true });
+  assert.equal(created?.category, 'Pets');
+  assert.equal(created?.created, true);
+
+  const existing = parseGeminiReply('{"category":"finance","new":true}', CATEGORIES, { allowNew: true });
+  assert.equal(existing?.category, 'Finance', 'an existing name is never "created"');
+  assert.equal(existing?.created, undefined);
+
+  assert.equal(parseGeminiReply('{"category":"Pets"}', CATEGORIES), null, 'closed list by default');
+});
+
+test('classifyWithGemini files into an existing category or reports a created one', async () => {
+  const settings = { apiKey: 'k', model: 'gemini-flash' };
+  const prompts: string[] = [];
+  const answer = (text: string) => async (_url: unknown, init?: RequestInit) => {
+    prompts.push(String(init?.body));
+    return jsonResponse(reply(text));
+  };
+
+  const fresh = await withFetch(answer('{"category":"Pets","new":true,"confidence":0.8,"reason":"pet care"}'),
+    () => classifyWithGemini(settings, { title: 'feed the cat' }, CATEGORIES));
+  assert.equal(fresh.category, 'Pets');
+  assert.equal(fresh.created, true);
+  assert.match(prompts[0], /create a new category/, 'new categories are on by default');
+
+  const known = await withFetch(answer('{"category":"Research","new":false}'),
+    () => classifyWithGemini(settings, { title: 'run the assay' }, [...CATEGORIES, 'Research']));
+  assert.equal(known.category, 'Research');
+  assert.equal(known.created, undefined);
+
+  await assert.rejects(
+    withFetch(answer('{"category":"Pets"}'),
+      () => classifyWithGemini(settings, { title: 'feed the cat' }, CATEGORIES, { allowNew: false })),
+    GeminiError,
+  );
 });

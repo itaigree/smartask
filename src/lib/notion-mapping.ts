@@ -3,6 +3,7 @@ import {
   normalizeCategoryName, isPriority, isStatus,
   type NewTask, type Task, type TaskPatch,
 } from './types.ts';
+import { localDateOf, toISODate } from './parse.ts';
 
 /**
  * The Notion page <-> Task mapping, with no SDK import, so it stays pure and
@@ -69,11 +70,16 @@ function readSelect(props: Props, name: string): string | null {
   return value ?? null;
 }
 
+/**
+ * A date property as the local day it falls on. With "Include time" on, Notion
+ * returns a timestamp; the app works in whole days, and a raw timestamp made
+ * the task vanish from Today and Overdue.
+ */
 function readDate(props: Props, name: string): string | null {
   const p = prop(props, name);
   const date = p?.date;
   if (!date || typeof date !== 'object') return null;
-  return (date as { start?: string }).start ?? null;
+  return localDateOf((date as { start?: string }).start);
 }
 
 function readMultiSelect(props: Props, name: string): string[] {
@@ -168,7 +174,7 @@ export function patchToProperties(patch: TaskPatch): Record<string, unknown> {
   if (patch.status !== undefined) {
     out[PROPS.status] = { select: { name: patch.status } };
     out[PROPS.completedAt] = patch.status === 'Done'
-      ? { date: { start: new Date().toISOString().slice(0, 10) } }
+      ? { date: { start: toISODate(new Date()) } } // the local day, as phone-only mode does
       : { date: null };
   }
   return out;

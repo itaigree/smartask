@@ -1,4 +1,6 @@
-import { BUILT_IN_CATEGORIES, type BuiltInCategory, type Category } from '../types.ts';
+import {
+  BUILT_IN_CATEGORIES, normalizeCategoryName, type BuiltInCategory, type Category,
+} from '../types.ts';
 import { addDays, toISODate } from '../parse.ts';
 import type { CategorySignal, Categorizer, RuleInput } from './index.ts';
 
@@ -33,7 +35,9 @@ const CATEGORY_GUIDE: Record<BuiltInCategory, string> = {
   Finance: 'money: bills, rent, tax, banking, insurance, invoices, budgeting',
   Learning: 'courses, studying, exams, homework, reading to learn, practising a skill',
   Home: 'the home itself: repairs, cleaning, furniture, garden, utilities setup',
-  Inbox: 'LAST RESORT: only when there is genuinely no clue at all what the task is about',
+  Inbox:
+    'LAST RESORT: only when there is genuinely no clue at all what the task is about — ' +
+    'not even enough to name a new category',
 };
 
 /**
@@ -83,25 +87,52 @@ function offered(categories: readonly string[]): string[] {
   return [...list, 'Inbox'];
 }
 
+export interface PromptOptions {
+  /** Let the model name a new category when none of the user's fits. */
+  allowNew?: boolean;
+}
+
 export function buildPrompt(
   input: RuleInput,
   categories: readonly string[] = BUILT_IN_CATEGORIES,
+  { allowNew = false }: PromptOptions = {},
 ): string {
   const now = input.now ?? new Date();
   const lines = [
     'Classify this personal task into exactly one category.',
     '',
     'The task may be written in any language — often Hebrew — and is usually short.',
-    'Classify it by meaning. Always answer with the English category name.',
+    'Classify it by meaning. Answer with the category name exactly as written in the',
+    'list below; built-in categories always get their English category name.',
     '',
-    'Categories:',
+    "The user's current categories:",
     ...offered(categories).map(describeCategory),
     '',
+  ];
+
+  if (allowNew) {
+    lines.push(
+      'Decide in two steps:',
+      "1. Go through the user's current categories above and pick the one that fits the",
+      '   task best. Prefer an existing category whenever it fits reasonably well, even',
+      '   if it is broader than the task.',
+      '2. Only if none of them fits, create a new category: a short, general English',
+      '   name of one or two words in Title Case (for example "Pets", "Car", "Wedding")',
+      '   that later tasks of the same kind could also go into. Never create a category',
+      '   that means the same as an existing one, or a narrower version of one.',
+      'Set "new" to true only when you created the category in step 2.',
+      '',
+    );
+  }
+
+  lines.push(
     'Examples:',
     ...EXAMPLES.map(([task, category]) => `${JSON.stringify(task)} -> ${category}`),
-    '',
-    `Task: ${JSON.stringify(input.title)}`,
-  ];
+  );
+  if (allowNew) {
+    lines.push('"להאכיל את החתול" -> Pets (new: true), but only if no pet category exists yet');
+  }
+  lines.push('', `Task: ${JSON.stringify(input.title)}`);
 
   if (input.note) lines.push(`Note: ${JSON.stringify(input.note)}`);
   if (input.project) lines.push(`Project: ${JSON.stringify(input.project)}`);
@@ -128,7 +159,9 @@ export function buildPrompt(
     'Do not choose Inbox just because the task is short.',
     '',
     'Reply with only a JSON object, no prose and no code fence:',
-    '{"category": "<one category from the list>", "due": "<YYYY-MM-DD or null>", "title": "<task without date words>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}',
+    allowNew
+      ? '{"category": "<a category from the list, or your new one>", "new": <true or false>, "due": "<YYYY-MM-DD or null>", "title": "<task without date words>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}'
+      : '{"category": "<one category from the list>", "due": "<YYYY-MM-DD or null>", "title": "<task without date words>", "confidence": <0 to 1>, "reason": "<at most 8 words>"}',
   );
 
   return lines.join('\n');
@@ -144,6 +177,7 @@ export function buildPrompt(
 export function parseGeminiReply(
   text: string,
   allowed: readonly string[] = BUILT_IN_CATEGORIES,
+  { allowNew = false }: PromptOptions = {},
 ): CategorySignal | null {
   if (!text) return null;
 
@@ -166,7 +200,15 @@ export function parseGeminiReply(
         due?: unknown;
         title?: unknown;
       };
-      const category = canonical(parsed.category);
+      let category = canonical(parsed.category);
+      let created = false;
+      if (!category && allowNew) {
+        const fresh = acceptNewCategory(parsed.category, choices);
+        if (fresh) {
+          category = fresh.name;
+          created = fresh.created;
+        }
+      }
       if (category) {
         const raw = Number(parsed.confidence);
         const confidence = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.8;
@@ -177,6 +219,7 @@ export function parseGeminiReply(
           category,
           confidence,
           reason,
+          ...(created ? { created: true } : {}),
           // Unvalidated here; sanitizeExtraction() decides what survives.
           extracted: {
             due: typeof parsed.due === 'string' ? parsed.due : null,
@@ -199,6 +242,52 @@ export function parseGeminiReply(
   }
 
   return null;
+}
+
+/** Longest name the model may invent; the user's own can be longer (up to 40). */
+const MAX_NEW_CATEGORY_LENGTH = 24;
+
+/** Spellings of one name that count as the same category: "Cars"/"car", "Glasses"/"glass". */
+function categoryKeys(name: string): string[] {
+  const letters = name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  if (letters.length <= 3) return [letters];
+  return [letters, letters.replace(/s$/, ''), letters.replace(/es$/, '')];
+}
+
+function sameCategory(a: string, b: string): boolean {
+  const keys = new Set(categoryKeys(a));
+  return categoryKeys(b).some((k) => keys.has(k));
+}
+
+/**
+ * Decide whether a category the model invented can be used.
+ *
+ * It must be a short, clean name (one to three words, a letter in it, nothing
+ * Notion would refuse). If it is only a spelling variant of a category the user
+ * already has — "Cars" next to "Car" — the existing one is used instead, so
+ * near-duplicates never pile up.
+ */
+export function acceptNewCategory(
+  raw: unknown,
+  existing: readonly string[],
+): { name: Category; created: boolean } | null {
+  if (typeof raw !== 'string') return null;
+  const name = normalizeCategoryName(raw.replace(/^["'\s]+|["'.\s]+$/g, ''));
+  if (!name) return null;
+
+  const twin = existing.find((c) => sameCategory(c, name));
+  if (twin) return { name: twin, created: false };
+
+  if (name.length > MAX_NEW_CATEGORY_LENGTH) return null;
+  if (name.split(' ').length > 3) return null;
+  if (!/\p{L}/u.test(name)) return null;
+  if (/[\n{}[\]<>|]/.test(name)) return null;
+
+  // An all-lowercase English answer is given Title Case, like the built-ins.
+  const tidy = /^[a-z][a-z ]*$/.test(name)
+    ? name.replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    : name;
+  return { name: tidy, created: true };
 }
 
 /** Words for comparison: lowercase, punctuation stripped, Hebrew letters kept. */
@@ -375,14 +464,21 @@ export function pickDefaultModel(models: GeminiModel[]): string | null {
   return models[0]?.id ?? null;
 }
 
-/** One classification call. Throws {@link GeminiError}; callers fall back to rules. */
+/**
+ * One classification call. Throws {@link GeminiError}; callers fall back to rules.
+ *
+ * Gemini sees every category the user has and picks the best fit. Only when
+ * none fits does it name a new one (`created: true` on the result), unless
+ * `allowNew` is false.
+ */
 export async function classifyWithGemini(
   settings: GeminiSettings,
   input: RuleInput,
   /** Every category the user has, so Gemini can file into their own ones too. */
   categories: readonly string[] = BUILT_IN_CATEGORIES,
+  { allowNew = true }: PromptOptions = {},
 ): Promise<CategorySignal> {
-  const prompt = buildPrompt(input, categories);
+  const prompt = buildPrompt(input, categories, { allowNew });
   const path = `/models/${encodeURIComponent(settings.model)}:generateContent`;
 
   // temperature 0 for a stable answer. maxOutputTokens is deliberately NOT set:
@@ -407,7 +503,7 @@ export async function classifyWithGemini(
     });
   }
 
-  const signal = parseGeminiReply(extractText(body), categories);
+  const signal = parseGeminiReply(extractText(body), categories, { allowNew });
   if (!signal) throw new GeminiError('Gemini replied with no usable category.');
   return {
     ...signal,

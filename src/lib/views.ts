@@ -1,5 +1,5 @@
 import { PRIORITY_WEIGHT, type Category, type Task } from './types.ts';
-import { toISODate, addDays } from './parse.ts';
+import { toISODate, addDays, localDateOf } from './parse.ts';
 
 /**
  * The "smart" half of the app: turning a flat task list into views worth
@@ -40,9 +40,10 @@ export function isOpen(task: Task): boolean {
 
 /** Whole days from today to `due`. Negative means overdue. Null when undated. */
 export function daysUntilDue(task: Task, now: Date): number | null {
-  if (!task.due) return null;
+  const day = localDateOf(task.due);
+  if (!day) return null;
   const today = new Date(toISODate(now) + 'T00:00:00');
-  const due = new Date(task.due + 'T00:00:00');
+  const due = new Date(day + 'T00:00:00');
   if (Number.isNaN(due.getTime())) return null;
   return Math.round((due.getTime() - today.getTime()) / 86_400_000);
 }
@@ -136,15 +137,20 @@ export function buildView(id: ViewId, tasks: Task[], now: Date = new Date()): Vi
     case 'upcoming': {
       const horizon = toISODate(addDays(now, UPCOMING_WINDOW_DAYS));
       const todayIso = toISODate(now);
+      // Grouped by calendar day, even if a due date somehow still carries a time.
+      const day = (t: Task) => localDateOf(t.due);
       const dated = open
-        .filter((t) => t.due && t.due > todayIso && t.due <= horizon)
-        .sort((a, b) => (a.due! < b.due! ? -1 : a.due! > b.due! ? 1 : sort(a, b)));
+        .filter((t) => {
+          const d = day(t);
+          return d !== null && d > todayIso && d <= horizon;
+        })
+        .sort((a, b) => (day(a)! < day(b)! ? -1 : day(a)! > day(b)! ? 1 : sort(a, b)));
 
       const byDay = new Map<string, Task[]>();
       for (const t of dated) {
-        const list = byDay.get(t.due!) ?? [];
+        const list = byDay.get(day(t)!) ?? [];
         list.push(t);
-        byDay.set(t.due!, list);
+        byDay.set(day(t)!, list);
       }
       const groups: TaskGroup[] = [...byDay].map(([iso, list]) => ({
         key: iso,

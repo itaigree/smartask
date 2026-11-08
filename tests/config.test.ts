@@ -54,3 +54,27 @@ test('the Notion link points at the connected database, in the form notion.so re
     'https://www.notion.so/0a8fbd6249a948a7a23a68ee2e74e191',
   );
 });
+
+test('R1-3/R2-5: a link whose title ends in a hex character still gives the right id', async () => {
+  const { normalizeId } = await import('../scripts/lib/env.mjs');
+  const expected = '0a8fbd62-49a9-48a7-a23a-68ee2e74e191';
+  const links = [
+    'https://www.notion.so/myworkspace/Tasks-DB-0a8fbd6249a948a7a23a68ee2e74e191?v=1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f',
+    'https://www.notion.so/myws/My-Home-0a8fbd6249a948a7a23a68ee2e74e191',
+    'https://www.notion.so/Life-0a8fbd6249a948a7a23a68ee2e74e191',
+    'https://www.notion.so/Tasks-2026-0a8fbd6249a948a7a23a68ee2e74e191',
+    'https://www.notion.so/%D7%9E%D7%A9%D7%99%D7%9E%D7%95%D7%AA-0a8fbd6249a948a7a23a68ee2e74e191',
+    'https://www.notion.so/myworkspace/0a8fbd6249a948a7a23a68ee2e74e191?v=1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f',
+    '0a8fbd62-49a9-48a7-a23a-68ee2e74e191',
+  ];
+  for (const link of links) {
+    assert.equal(normalizeDatabaseId(link), expected, link);
+    assert.equal(normalizeId(link), expected, `scripts: ${link}`);
+  }
+  // Notion's own API docs sample.
+  assert.equal(
+    normalizeDatabaseId('https://www.notion.so/Example-Page-1429989fe8ac4effbc8f57f56486db54'),
+    '1429989f-e8ac-4eff-bc8f-57f56486db54',
+  );
+  assert.equal(normalizeId(''), null);
+});

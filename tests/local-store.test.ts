@@ -4,6 +4,7 @@ import {
   createLocalRepository, readTasks, sanitizeStoredTask, exportBackup, importBackup,
   countLocalTasks, LocalStoreError, type KeyValueStore,
 } from '../src/lib/local-store.ts';
+import { toISODate } from '../src/lib/parse.ts';
 import { resolveStorageMode, loadLocalChosen } from '../src/lib/config.ts';
 import type { Categorizer } from '../src/lib/categorize/index.ts';
 
@@ -144,4 +145,12 @@ test('Notion credentials always win, so a connected user never sees the new choi
   assert.equal(resolveStorageMode(null, true), 'local');
   assert.equal(resolveStorageMode(null, false), null, 'first launch: ask');
   assert.equal(loadLocalChosen(), false, 'no browser: nothing chosen, no crash');
+});
+
+test('R1-2: a restored task with a timestamp due date keeps its local day', () => {
+  const stamp = '2026-11-08T10:00:00.000+02:00';
+  const t = sanitizeStoredTask({ id: 'a', title: 'x', due: stamp, completedAt: '2026-11-07T23:30:00Z' });
+  assert.equal(t?.due, toISODate(new Date(stamp)));
+  assert.equal(t?.completedAt, toISODate(new Date('2026-11-07T23:30:00Z')));
+  assert.equal(sanitizeStoredTask({ id: 'b', title: 'y', due: '2026-02-31' })?.due, null);
 });

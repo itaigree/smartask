@@ -18,10 +18,19 @@ export function loadEnv(files = ['.env.local', '.env']) {
 
 /** Accepts a bare id or any Notion URL containing one; returns a dashed uuid. */
 export function normalizeId(raw) {
-  const hex = String(raw ?? '').replace(/-/g, '').match(/[0-9a-f]{32}/i);
-  if (!hex) return null;
-  const s = hex[0];
-  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
+  // Same rules as findNotionId() in src/lib/config.ts: the last id in the path
+  // that does not touch another hex character, so a title ending in a-f or 0-9
+  // ("Home", "DB", "2026") is never glued onto it. Kept separate because the
+  // scripts run in plain Node without the app's TypeScript.
+  const ID = /(?<![0-9a-f])([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})(?![0-9a-f])/gi;
+  const trimmed = String(raw ?? '').trim();
+  const path = trimmed.split(/[?#]/)[0];
+  for (const where of [path, trimmed]) {
+    const matches = [...where.matchAll(ID)];
+    const last = matches[matches.length - 1];
+    if (last) return last.slice(1, 6).join('-').toLowerCase();
+  }
+  return null;
 }
 
 export const ok = (msg) => console.log(`  \x1b[32m✓\x1b[0m ${msg}`);

@@ -122,6 +122,35 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-08 — Bug-hunt chunk 1 fixed; Gemini can create categories.**
+
+From `docs/bug-hunt-2026-11-06.md`, the parser, date and Notion-id group:
+
+- Parser (`parse.ts`): matching now blanks claimed text with spaces of the same
+  length, so a token before a date no longer cuts the wrong letters (R1-1) and
+  overlapping spans are merged (R1-10). Links are masked before matching and
+  word edges are stricter (R1-19). Date patterns try every match and only real
+  month names (R1-9); a year after a month name is honoured (R1-20); impossible
+  dates are rejected, 29/02 waits for a leap year (R1-21); months are added with
+  the day clamped (R1-22). A bare day.month with no year is the last, weakest
+  pattern and is refused before a unit, after a time or price cue, or (dotted)
+  after an English word (R1-4) — a missed date keeps its text and Gemini can
+  fill it. Priority words are case-insensitive (R1-18), ambiguous ones count
+  only at the start or end, "not urgent" is Low (R1-17), `now!` and `!!!!` work
+  (R1-45), and `@urgent`/`#asap` set priority. A preposition is removed only
+  with the date it introduces, in English and Hebrew (R1-44, R2-2). Hebrew
+  acronyms with a plain quote stay whole in tags (R2-10).
+- Dates: Notion timestamps and restored ones become the local day
+  (`localDateOf`, R1-2); Completed and the backup file name use the local day
+  (R1-34, R2-16).
+- Notion ids: the last id in the link path that touches no other hex
+  character, in the app and the scripts (R1-3, R2-5).
+- Feature: `classifyWithGemini` lists every category, asks for the best
+  existing fit, and only then a new short general one (`created: true`);
+  `acceptNewCategory` rejects bad names and maps plural/case twins to the
+  existing category. App remembers created names at once so quick captures
+  and Sort with Gemini reuse them.
+
 **2026-11-06 — Phase 15: editable and custom categories.**
 
 Tapping a task's category opens a sheet listing every category, the current

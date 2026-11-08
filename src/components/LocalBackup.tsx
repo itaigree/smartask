@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { exportBackup, importBackup, LocalStoreError } from '../lib/local-store.ts';
+import { toISODate } from '../lib/parse.ts';
 
 /**
  * The safety net for phone-only mode. These tasks exist in one browser on one
@@ -18,7 +19,7 @@ export default function LocalBackup({ onRestored }: { onRestored: () => void }) 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `smartask-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `smartask-backup-${toISODate(new Date())}.json`; // the local day, not UTC
     document.body.appendChild(a);
     a.click();
     a.remove();

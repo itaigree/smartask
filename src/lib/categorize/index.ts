@@ -14,6 +14,11 @@ export interface CategorySignal {
   /** Set when an AI classifier was tried and the rules answered instead. */
   fallbackReason?: string;
   /**
+   * True when no existing category fitted and the classifier named a new one.
+   * The category is not in the user's list yet; saving the task adds it.
+   */
+  created?: boolean;
+  /**
    * Structure an AI found that the local parser could not — a Hebrew date, say.
    * Already validated by the classifier; capture only uses it to fill gaps.
    */

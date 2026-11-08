@@ -19,10 +19,28 @@ const STORAGE_MODE_KEY = 'smartask.storage.v1';
 
 /** Accepts a bare id or any Notion URL containing one; returns a dashed uuid. */
 export function normalizeDatabaseId(raw: string): string | null {
-  const hex = String(raw ?? '').replace(/-/g, '').match(/[0-9a-f]{32}/i);
-  if (!hex) return null;
-  const s = hex[0].toLowerCase();
-  return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
+  return findNotionId(String(raw ?? ''));
+}
+
+/**
+ * The 32-hex id in a bare id or a Notion link, dashed.
+ *
+ * Links look like `/Title-Words-<id>?v=<view id>`. The id is the last one in
+ * the path that does not touch another hex character, with or without dashes.
+ * (Stripping every dash first glued a title ending in a-f or 0-9 — "Home",
+ * "DB", "2026" — onto the id and produced a wrong one.) The query string is
+ * only searched when the path has no id, because `?v=` holds a view id.
+ */
+export function findNotionId(text: string): string | null {
+  const ID = /(?<![0-9a-f])([0-9a-f]{8})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{4})-?([0-9a-f]{12})(?![0-9a-f])/gi;
+  const trimmed = text.trim();
+  const path = trimmed.split(/[?#]/)[0];
+  for (const where of [path, trimmed]) {
+    const matches = [...where.matchAll(ID)];
+    const last = matches[matches.length - 1];
+    if (last) return last.slice(1, 6).join('-').toLowerCase();
+  }
+  return null;
 }
 
 /** A token is not validated here — only Notion can do that — but obvious pastes of the wrong thing are caught. */

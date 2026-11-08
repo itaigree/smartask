@@ -25,12 +25,20 @@ party.
 | You type | It sets |
 |---|---|
 | `tomorrow`, `friday`, `next monday`, `in 3 days`, `next week` | Due date |
-| `25/12`, `2026-12-25`, `dec 25`, `25 dec` | Due date (a date already past rolls to next year) |
-| `!` / `!!` | High / Urgent priority |
-| `urgent`, `asap` / `important` / `someday` | Urgent / High / Low priority |
+| `25/12`, `25.12`, `25/12/2027`, `2026-12-25`, `dec 25`, `3 march 2028` | Due date (a date already past rolls to next year) |
+| `עד 10/11`, `ב-10/11`, `ב10.11` | Due date — the Hebrew preposition leaves the title with it |
+| `!` / `!!` (or more) | High / Urgent priority |
+| `asap`, `as soon as possible`, `now!` | Urgent priority, anywhere in the task |
+| `Urgent:` / `important` / `someday` / `not urgent` | Urgent / High / Low / Low — only at the start or end of the task, in any letter case |
 | `#project` | Project |
 | `@tag` | Tag |
 | anything after a newline or ` // ` | Note |
+
+The parser would rather miss a date than invent one. Numbers that are probably
+quantities, prices, times or versions — `1.5 ליטר`, `1/2 kg`, `at 9.05`,
+`python 3.12` — stay in the title, and so does anything inside a link. With AI
+on, Gemini still catches a date the parser left alone. Impossible dates such as
+`31/02` are never rolled into another day.
 
 Whatever is left becomes the title, with the matched phrases removed — so
 `call the bank about the overdraft tomorrow` is titled *call the bank about the
@@ -143,6 +151,14 @@ better at those and costs nothing.
   out of the title. A date the built-in parser already understood (English
   "friday", "25/12") always wins; Gemini only fills the gap. Gemini's title is
   used only if it removes words without changing any, so your wording is kept.
+- **Your categories first, a new one only when nothing fits.** Gemini sees
+  every category you have — the built-ins and your own — and files the task
+  into the best fit, even a broader one. Only when none of them fits does it
+  create a new, short, general category ("Pets", "Car", "Wedding"); the note
+  under the box says so, and the new category is then offered for every later
+  task. A near-twin of an existing one ("Cars" next to "Car") is never created.
+  If you dislike a new category, tap the task's category to move it; an
+  unused category can be removed from the same list.
 - **Any language.** Gemini classifies by meaning, so Hebrew (or anything else)
   works. The keyword rules are English-only, which is why they file non-English
   tasks to Inbox when AI is off.

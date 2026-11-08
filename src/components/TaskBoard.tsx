@@ -462,7 +462,16 @@ function CaptureNote({
     </>
   ) : null;
 
-  if (signal.source === 'gemini') {
+  if (signal.source === 'gemini' && signal.created) {
+    body = (
+      <>
+        ✦ None of your categories fitted <strong dir="auto">{title}</strong>, so Gemini created{' '}
+        <strong dir="auto">{signal.category}</strong>
+        {due}
+        {signal.reason ? ` — ${signal.reason}` : ''}. Tap the category on the task to change it.
+      </>
+    );
+  } else if (signal.source === 'gemini') {
     body = (
       <>
         ✦ Gemini filed <strong dir="auto">{title}</strong> under{' '}

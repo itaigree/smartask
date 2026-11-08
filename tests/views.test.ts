@@ -147,3 +147,23 @@ test('counts drive the tab badges', () => {
   ], NOW);
   assert.deepEqual(counts, { open: 3, overdue: 1, today: 2, done: 1 });
 });
+
+test('R1-2: a due date with a time counts by its local day', () => {
+  const at = (days: number, hour: number) => {
+    const d = addDays(NOW, days);
+    d.setHours(hour);
+    return d.toISOString(); // a UTC timestamp, as Notion may return
+  };
+  const timedToday = task({ due: at(0, 14), title: 'timed today' });
+  const timedLate = task({ due: at(-1, 9), title: 'timed overdue', priority: 'Urgent' });
+  const timedSoon = task({ due: at(3, 10), title: 'timed in 3 days' });
+  const tasks = [timedToday, timedLate, timedSoon];
+
+  assert.equal(daysUntilDue(timedToday, NOW), 0);
+  assert.equal(isOverdue(timedLate, NOW), true);
+  const today = buildView('today', tasks, NOW);
+  assert.deepEqual(today.groups.map((g) => g.key), ['overdue', 'today']);
+  const upcoming = buildView('upcoming', tasks, NOW);
+  assert.deepEqual(upcoming.groups.map((g) => g.key), [iso(3)]);
+  assert.ok(!upcoming.groups.some((g) => /invalid/i.test(g.label)));
+});
