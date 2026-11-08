@@ -3,7 +3,7 @@ import { getCategorizer, type Categorizer } from './categorize/index.ts';
 import { localDateOf, toISODate } from './parse.ts';
 import type { CaptureResult, TaskRepository } from './tasks.ts';
 import {
-  normalizeCategoryName, isPriority, isStatus,
+  readCategoryName, isPriority, isStatus,
   type NewTask, type Task, type TaskPatch,
 } from './types.ts';
 
@@ -54,7 +54,9 @@ export function sanitizeStoredTask(raw: unknown): Task | null {
   return {
     id: t.id,
     title: t.title,
-    category: normalizeCategoryName(t.category) ?? 'Inbox',
+    // Read like a Notion category: the category list is shared, so a long name
+    // learned from Notion can be picked here too, and must not turn into Inbox.
+    category: readCategoryName(t.category) ?? 'Inbox',
     priority: isPriority(t.priority) ? t.priority : 'Normal',
     status: isStatus(t.status) ? t.status : 'Todo',
     due: date(t.due),

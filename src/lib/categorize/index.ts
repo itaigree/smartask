@@ -1,5 +1,5 @@
 import type { Category } from '../types.ts';
-import { rulesCategorizer, type RuleInput } from './rules.ts';
+import { rulesCategorizer, rulesCanRead, type RuleInput } from './rules.ts';
 
 export interface CategorySignal {
   category: Category;
@@ -43,6 +43,22 @@ export interface Categorizer {
 }
 
 export type { RuleInput };
+export { rulesCanRead };
+
+/**
+ * A categorizer that is told the user's categories on every call, read at call
+ * time — so `@research` names a Research category created a moment ago.
+ */
+export function withCategories(
+  categorizer: Categorizer,
+  getCategories: () => readonly string[],
+): Categorizer {
+  return {
+    name: categorizer.name,
+    categorize: (input) =>
+      categorizer.categorize({ ...input, categories: input.categories ?? getCategories() }),
+  };
+}
 
 let cached: Categorizer | null = null;
 

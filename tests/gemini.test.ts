@@ -5,8 +5,10 @@ import {
   parseGeminiReply, extractText, describeGeminiError,
   scoreModel, pickDefaultModel, listGeminiModels, createGeminiCategorizer,
   classifyWithGemini, GeminiError, acceptNewCategory, GEMINI_TIMEOUT_MS,
+  isDateCut, modelChoices,
 } from '../src/lib/categorize/gemini.ts';
 import { rulesCategorizer } from '../src/lib/categorize/rules.ts';
+import { captureDraft } from '../src/lib/capture.ts';
 import { CATEGORIES } from '../src/lib/types.ts';
 
 /** Swap global fetch for one call, then put it back. */
@@ -391,4 +393,243 @@ test('R1-12: a Gemini request that never answers times out and the rules file th
   assert.equal(signal.category, 'Finance');
   assert.match(signal.fallbackReason ?? '', /took too long/);
   assert.match(errors[0], /took too long/);
+});
+
+/* ---- R1-11: Gemini's title may only cut the date words ---- */
+
+test('R1-11: a title that reorders, drops or keeps only the date is refused', () => {
+  const title = (original: string, t: string) =>
+    sanitizeExtraction({ due: '2026-11-07', title: t }, original, FRI).title;
+  // The report's three slips.
+  assert.equal(title('להתקשר לאמא לא לאבא מחר', 'להתקשר לאבא לא לאמא'), null, 'reordered');
+  assert.equal(title('לא לשלם את החשבון של דני מחר', 'לשלם את החשבון'), null, '"not" and more dropped');
+  assert.equal(title('לשלם חשבון חשמל לבזק מחר', 'מחר'), null, 'only the date left');
+  // Other ways to lose the meaning.
+  assert.equal(title('מחר לא לשלם את החשבון', 'לשלם את החשבון'), null, 'a "not" cut with the date');
+  assert.equal(title("don't call the bank tomorrow", 'call the bank'), null);
+  assert.equal(title("we won't pay tomorrow", 'we pay'), null);
+  assert.equal(title('לשלם חשבון חשמל מחר', 'לשלם'), null, 'over-shortened');
+  assert.equal(title('לשלם חשבון חשמל מחר', 'חשבון חשמל'), null, 'a word cut away from the date');
+  assert.equal(title('פגישה ביום שלישי הבא בבוקר', 'פגישה'), null, 'a one-word stub');
+});
+
+test('R1-11: a title with one short date phrase cut is used', () => {
+  assert.ok(isDateCut('לשלם חשבון חשמל מחר', 'לשלם חשבון חשמל'), 'at the end');
+  assert.ok(isDateCut('מחר לשלם חשבון חשמל', 'לשלם חשבון חשמל'), 'at the start');
+  assert.ok(isDateCut('להתקשר ביום שלישי לאמא', 'להתקשר לאמא'), 'in the middle');
+  assert.ok(isDateCut('להתקשר לאמא ביום שלישי הבא', 'להתקשר לאמא'), 'three date words, two kept');
+  assert.ok(isDateCut('פגישה עם יוסי עד יום חמישי הבא', 'פגישה עם יוסי'), 'four date words');
+  assert.ok(isDateCut('ישיבה ביום ראשון', 'ישיבה'), 'a short task keeps one word');
+  assert.ok(isDateCut('להגיש דו"ח הוצאות מחר', 'להגיש דו"ח הוצאות'), 'Hebrew acronyms');
+  assert.ok(isDateCut('לשלם חשבון חשמל מחר', 'לשלם חשבון חשמל.'), 'punctuation is tolerated');
+  assert.ok(!isDateCut('a b c d e f g h', 'a b c'), 'five words is not a date phrase');
+});
+
+test('R1-11: end to end, a slip keeps the user\'s words and still takes the date', async () => {
+  const categorizer = createGeminiCategorizer({ apiKey: 'k', model: 'm' }, rulesCategorizer);
+  const { draft } = await withFetch(
+    async () => jsonResponse(reply(JSON.stringify({
+      category: 'Finance', due: '2026-11-07', title: 'מחר', confidence: 0.9, reason: 'bill',
+    }))),
+    () => captureDraft('לשלם חשבון חשמל לבזק מחר', FRI, categorizer),
+  );
+  assert.equal(draft.title, 'לשלם חשבון חשמל לבזק מחר');
+  assert.equal(draft.due, '2026-11-07');
+});
+
+/* ---- R1-13: a broken reply never takes its category from free text ---- */
+
+test('R1-13: a Hebrew acronym with a plain quote no longer breaks the reply', () => {
+  const text = '{"category":"Work","due":"2026-11-07","title":"להגיש דו"ח הוצאות","reason":"expense report for work, finance related"}';
+  const signal = parseGeminiReply(text);
+  assert.equal(signal?.category, 'Work', 'the category field, not "finance" in the reason');
+  assert.deepEqual(signal?.extracted, { due: '2026-11-07', title: 'להגיש דו"ח הוצאות' });
+  assert.equal(
+    sanitizeExtraction(signal?.extracted, 'להגיש דו"ח הוצאות מחר', FRI).title,
+    'להגיש דו"ח הוצאות',
+  );
+});
+
+test('R1-13: JSON broken some other way still gives its own category and date', () => {
+  const text = '{"category":"Work","due":"2026-11-07","title":"send the "final" deck","reason":"for personal use"}';
+  const signal = parseGeminiReply(text);
+  assert.equal(signal?.category, 'Work');
+  assert.equal(signal?.extracted?.due, '2026-11-07');
+  assert.equal(signal?.extracted?.title, null, 'a field that cannot be read safely is left out');
+});
+
+test('R1-13: a JSON reply without a usable category is refused, not word-searched', () => {
+  assert.equal(parseGeminiReply('{"category":"Shopping","reason":"personal shopping for a gift"}'), null);
+  assert.equal(parseGeminiReply('{"reason":"not Work related"}'), null, 'no category field');
+  assert.equal(parseGeminiReply('{"category":null,"title":"pay the bill for work"}'), null);
+  assert.equal(parseGeminiReply('{"reason":"for work and finance", "category": "Fin'), null,
+    'cut off inside the category: none, whatever the reason says');
+  assert.equal(parseGeminiReply('{"category":"Work","due":"2026-11-07"')?.category, 'Work',
+    'cut off, but the category itself was complete');
+});
+
+test('R1-13: a bare reply must be short and name one category', () => {
+  assert.equal(parseGeminiReply('Finance or Home'), null, 'two categories is no answer');
+  assert.equal(
+    parseGeminiReply('This one is hard to say, it could be about money but it mentions Work'),
+    null,
+    'a long sentence is not a category',
+  );
+});
+
+test('R1-13: end to end, the report\'s reply files under Work with its date', async () => {
+  const categorizer = createGeminiCategorizer({ apiKey: 'k', model: 'm' }, rulesCategorizer);
+  const { draft, signal } = await withFetch(
+    async () => jsonResponse(reply(
+      '{"category":"Work","due":"2026-11-07","title":"להגיש דו"ח הוצאות","reason":"expense report for work, finance related"}',
+    )),
+    () => captureDraft('להגיש דו"ח הוצאות מחר', FRI, categorizer),
+  );
+  assert.equal(signal.source, 'gemini');
+  assert.equal(draft.category, 'Work');
+  assert.equal(draft.due, '2026-11-07');
+  assert.equal(draft.title, 'להגיש דו"ח הוצאות');
+});
+
+test('R1-13: Gemini is asked for JSON, and a model without JSON mode is asked again plainly', async () => {
+  const bodies: string[] = [];
+  const signal = await withFetch(async (_url, init) => {
+    bodies.push(String(init?.body));
+    if (bodies.length === 1) {
+      return jsonResponse({
+        error: { code: 400, status: 'INVALID_ARGUMENT', message: 'JSON mode is not enabled for models/gemma-3-27b-it' },
+      }, 400);
+    }
+    return jsonResponse(reply('{"category":"Home"}'));
+  }, () => classifyWithGemini({ apiKey: 'k', model: 'gemma-3-27b-it' }, { title: 'fix the door' }));
+
+  assert.equal(JSON.parse(bodies[0]).generationConfig.responseMimeType, 'application/json');
+  assert.equal(bodies.length, 2);
+  assert.ok(!bodies[1].includes('responseMimeType'), 'the retry drops it');
+  assert.equal(signal.category, 'Home');
+});
+
+test('R1-13: a key or quota error is not retried as if an option were at fault', async () => {
+  let calls = 0;
+  await assert.rejects(
+    withFetch(async () => {
+      calls += 1;
+      return jsonResponse({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded.' } }, 429);
+    }, () => classifyWithGemini({ apiKey: 'k', model: 'm' }, { title: 'x' })),
+    GeminiError,
+  );
+  assert.equal(calls, 1);
+});
+
+/* ---- R1-41: rate limits say which limit it was ---- */
+
+const quota = (quotaId: string, quotaValue: string, retryDelay?: string) => ({
+  error: {
+    code: 429, status: 'RESOURCE_EXHAUSTED', message: 'You exceeded your current quota.',
+    details: [
+      { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId, quotaValue }] },
+      ...(retryDelay ? [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay }] : []),
+    ],
+  },
+});
+
+test('R1-41: a used-up daily quota says it lasts until the reset, not "shortly"', () => {
+  const message = describeGeminiError(
+    quota('GenerateRequestsPerDayPerProjectPerModel-FreeTier', '50', '40s'), 429,
+  );
+  assert.match(message, /daily Gemini limit/);
+  assert.match(message, /within a day/);
+  assert.doesNotMatch(message, /shortly|40 seconds/);
+});
+
+test('R1-41: a model with no free quota says to pick another', () => {
+  const message = describeGeminiError(
+    quota('GenerateRequestsPerMinutePerProjectPerModel-FreeTier', '0'), 429,
+  );
+  assert.match(message, /no free quota/);
+  assert.match(message, /Pick another in AI settings/);
+  assert.match(
+    describeGeminiError({ error: { status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded for metric: x, limit: 0, model: y' } }, 429),
+    /no free quota/,
+  );
+});
+
+test('R1-41: a per-minute limit uses the wait Google sends', () => {
+  const minute = 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier';
+  assert.match(describeGeminiError(quota(minute, '15', '17.4s'), 429), /Try again in 18 seconds/);
+  assert.match(describeGeminiError(quota(minute, '15', '1s'), 429), /in 1 second\./);
+  assert.match(describeGeminiError(quota(minute, '15', '130s'), 429), /in 3 minutes/);
+  assert.match(describeGeminiError(quota(minute, '15'), 429), /work again shortly/);
+});
+
+/* ---- R1-24: a website restriction that blocks the app is named ---- */
+
+test('R1-24: a key restricted to the wrong website address is not called unusable', () => {
+  const blocked = {
+    error: {
+      code: 403, status: 'PERMISSION_DENIED',
+      message: 'Requests from referer https://itaigree.github.io/ are blocked.',
+      details: [{ reason: 'API_KEY_HTTP_REFERRER_BLOCKED' }],
+    },
+  };
+  const message = describeGeminiError(blocked, 403);
+  assert.match(message, /website restriction blocks this site/);
+  assert.match(message, /address followed by \/\*/);
+  assert.match(describeGeminiError({ error: { status: 'PERMISSION_DENIED' } }, 403), /cannot use the Gemini API/);
+});
+
+/* ---- R1-43: with AI on, a tag naming a category wins too ---- */
+
+test('R1-43: a tag naming a category wins over Gemini, which still finds the date', async () => {
+  const signal = await withFetch(
+    async () => jsonResponse(reply(JSON.stringify({
+      category: 'Finance', due: '2026-11-07', title: 'לשלם חשבון חשמל', reason: 'a bill',
+    }))),
+    () => classifyWithGemini(
+      { apiKey: 'k', model: 'm' },
+      { title: 'לשלם חשבון חשמל מחר', tags: ['home'], now: FRI },
+      CATEGORIES,
+    ),
+  );
+  assert.equal(signal.category, 'Home');
+  assert.equal(signal.reason, 'named by a tag');
+  assert.equal(signal.source, 'gemini');
+  assert.deepEqual(signal.extracted, { due: '2026-11-07', title: 'לשלם חשבון חשמל' });
+});
+
+test('R1-43: a tag can name the user\'s own category, and a category Gemini made is dropped', async () => {
+  const signal = await withFetch(
+    async () => jsonResponse(reply('{"category":"Paperwork","new":true}')),
+    () => classifyWithGemini({ apiKey: 'k', model: 'm' }, { title: 'IRB renewal form', tags: ['research'] },
+      [...CATEGORIES, 'Research']),
+  );
+  assert.equal(signal.category, 'Research');
+  assert.equal(signal.created, undefined, 'nothing new is remembered');
+});
+
+test('R2-9: when Gemini fails, the rules still honour a tag naming the user\'s own category', async () => {
+  const categorizer = createGeminiCategorizer(
+    { apiKey: 'k', model: 'm' }, rulesCategorizer, undefined, () => [...CATEGORIES, 'Research'],
+  );
+  const signal = await withFetch(
+    async () => { throw new Error('offline'); },
+    () => categorizer.categorize({ title: 'IRB renewal form', tags: ['research'] }),
+  );
+  assert.equal(signal.source, 'rules');
+  assert.equal(signal.category, 'Research');
+});
+
+/* ---- R1-23: a retired saved model is shown as such ---- */
+
+test('R1-23: a saved model Google no longer lists stays selectable as "unavailable"', () => {
+  const models = [{ id: 'gemini-2.5-flash-lite', label: 'Lite' }, { id: 'gemini-2.5-flash', label: 'Flash' }];
+  const retired = modelChoices(models, 'gemini-2.0-flash-lite');
+  assert.equal(retired[0].id, 'gemini-2.0-flash-lite', 'first, so the dropdown shows what is in use');
+  assert.equal(retired[0].unavailable, true);
+  assert.match(retired[0].label, /unavailable/);
+  assert.deepEqual(retired.slice(1), models, 'every listed model is a real change from it');
+
+  assert.deepEqual(modelChoices(models, 'gemini-2.5-flash'), models);
+  assert.deepEqual(modelChoices([], 'gemini-2.5-flash'), [{ id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' }],
+    'before the list is read, just the current one');
 });

@@ -1,4 +1,6 @@
-import type { BuiltInCategory as Category } from '../types.ts';
+import {
+  BUILT_IN_CATEGORIES, categoryKey, type BuiltInCategory, type Category,
+} from '../types.ts';
 import type { CategorySignal, Categorizer } from './index.ts';
 
 /**
@@ -9,7 +11,7 @@ import type { CategorySignal, Categorizer } from './index.ts';
  * Multi-word phrases score 2, single words score 1 — "pick up" should beat a
  * stray "up". Keep these lowercase; matching is case-insensitive.
  */
-const RULES: Array<[Category, string[]]> = [
+const RULES: Array<[BuiltInCategory, string[]]> = [
   ['Finance', [
     'pay', 'paid', 'bill', 'bills', 'rent', 'invoice', 'tax', 'taxes', 'vat',
     'bank', 'salary', 'budget', 'insurance', 'refund', 'subscription',
@@ -68,11 +70,6 @@ const COMPILED = RULES.map(([category, words]) => ({
   })),
 }));
 
-/** Lowercase category names, so `#work` or `@health` can name a category outright. */
-const BY_NAME = new Map<string, Category>(
-  RULES.map(([category]) => [category.toLowerCase(), category]),
-);
-
 export interface RuleInput {
   title: string;
   note?: string | null;
@@ -80,6 +77,50 @@ export interface RuleInput {
   tags?: string[];
   /** The user's local "now", for classifiers that resolve relative dates. Rules ignore it. */
   now?: Date;
+  /**
+   * Every category the user has, so `@research` can name their own Research.
+   * The built-ins when absent.
+   */
+  categories?: readonly string[];
+}
+
+/** A tag cannot hold a space, so `side-project` and `side_project` both mean "Side Project". */
+const tokenKey = (name: string) => categoryKey(name.replace(/[-_]+/g, ' '));
+
+/**
+ * The category a tag or project names, in the user's spelling, or null —
+ * `@work`, `@research`, `#מחקר`. Inbox is never named this way: it is where a
+ * task goes when nothing decides, not a place to send one.
+ */
+export function categoryNamedBy(
+  token: string | null | undefined,
+  categories: readonly string[] = BUILT_IN_CATEGORIES,
+): Category | null {
+  if (!token) return null;
+  const key = tokenKey(token);
+  if (key === 'inbox') return null;
+  return [...categories, ...BUILT_IN_CATEGORIES].find((c) => tokenKey(c) === key) ?? null;
+}
+
+/** The first tag that names a category, which then wins outright. */
+export function categoryNamedByTags(
+  tags: readonly string[] | undefined,
+  categories?: readonly string[],
+): Category | null {
+  for (const tag of tags ?? []) {
+    const category = categoryNamedBy(tag, categories);
+    if (category) return category;
+  }
+  return null;
+}
+
+/**
+ * Whether the keyword rules can read this text at all. Their word lists are
+ * English, so a task with letters in another script (Hebrew, say) only ever
+ * reaches a category through a tag or project.
+ */
+export function rulesCanRead(text: string): boolean {
+  return !/(?!\p{Script=Latin})\p{L}/u.test(text);
 }
 
 /**
@@ -87,17 +128,15 @@ export interface RuleInput {
  *
  * Two tiers of explicit naming, because `#` and `@` mean different things:
  *
- * - A **tag** that names a category wins outright. `@work` is a label; using a
- *   category name as one is a deliberate statement about where the task belongs.
+ * - A **tag** that names a category — a built-in or one of the user's own —
+ *   wins outright. `@work` is a label; using a category name as one is a
+ *   deliberate statement about where the task belongs. Gemini honours it too.
  * - A **project** that names a category is only a fallback. `#home` on "pay the
  *   electricity bill" means the household project, not the Home category — the
  *   keywords in the text are the better evidence, so they win.
  */
 export function categorizeByRules(input: RuleInput): CategorySignal {
-  const taggedCategory = input.tags
-    ?.map((tag) => BY_NAME.get(tag.toLowerCase()))
-    .find((category): category is Category => Boolean(category));
-
+  const taggedCategory = categoryNamedByTags(input.tags, input.categories);
   if (taggedCategory) {
     return { category: taggedCategory, confidence: 1, reason: 'named by a tag', source: 'rules' };
   }
@@ -106,7 +145,7 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
     .join(' ')
     .toLowerCase();
 
-  let best: { category: Category; score: number; hits: string[] } | null = null;
+  let best: { category: BuiltInCategory; score: number; hits: string[] } | null = null;
 
   for (const { category, matchers } of COMPILED) {
     let score = 0;
@@ -123,7 +162,7 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
   if (!best) {
     // Nothing in the text to go on: fall back to the project name, if it
     // happens to name a category, before giving up to Inbox.
-    const projectCategory = BY_NAME.get((input.project ?? '').toLowerCase());
+    const projectCategory = categoryNamedBy(input.project, input.categories);
     if (projectCategory) {
       return {
         category: projectCategory, confidence: 0.6, reason: 'named by the project', source: 'rules',

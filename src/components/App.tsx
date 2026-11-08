@@ -6,7 +6,9 @@ import {
   setLocalChosen,
   type GeminiConfig, type NotionConfig,
 } from '../lib/config.ts';
-import { getCategorizer, type Categorizer, type CategorySignal } from '../lib/categorize/index.ts';
+import {
+  getCategorizer, withCategories, type Categorizer, type CategorySignal,
+} from '../lib/categorize/index.ts';
 import {
   categoryList, loadCustomCategories, saveCustomCategories,
 } from '../lib/categories.ts';
@@ -93,8 +95,10 @@ export default function App() {
    * it: a failed request must never stop a task being saved.
    */
   const categorizer = useMemo((): Categorizer => {
-    if (!gemini) return getCategorizer();
-    const ai = createGeminiCategorizer(gemini, getCategorizer(), undefined, offeredCategories);
+    // The rules are told the user's categories too, so `@research` names Research.
+    const rules = withCategories(getCategorizer(), offeredCategories);
+    if (!gemini) return rules;
+    const ai = createGeminiCategorizer(gemini, rules, undefined, offeredCategories);
     return {
       name: ai.name,
       categorize: async (input) => rememberCreated(await ai.categorize(input)),

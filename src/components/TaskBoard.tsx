@@ -5,9 +5,9 @@ import { maskToken, notionDatabaseUrl } from '../lib/config.ts';
 import { ValidationError } from '../lib/capture.ts';
 import { LocalStoreError, TASKS_KEY } from '../lib/local-store.ts';
 import { describeNotionError, UnconfirmedSaveError } from '../lib/notion.ts';
-import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
+import { rulesCanRead, type CategorySignal, type RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
-import { categoryList, unseenCategories } from '../lib/categories.ts';
+import { categoryList, learnCategories } from '../lib/categories.ts';
 import CategoryPicker from './CategoryPicker.tsx';
 import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
@@ -379,11 +379,12 @@ export default function TaskBoard({
   }, [tasks]);
 
   // Learn categories found on tasks — made on another device, or added straight
-  // in Notion — so they appear in the picker and Gemini is offered them too.
+  // in Notion — so they appear in the picker and Gemini is offered them too, in
+  // the spelling the tasks use.
   useEffect(() => {
     if (!tasks) return;
-    const unseen = unseenCategories(customCategories, tasks);
-    if (unseen.length) onCustomCategoriesChange([...customCategories, ...unseen]);
+    const learned = learnCategories(customCategories, tasks);
+    if (learned) onCustomCategoriesChange(learned);
   }, [tasks, customCategories, onCustomCategoriesChange]);
 
   const editing = editingId ? byId.get(editingId) ?? null : null;
@@ -456,7 +457,7 @@ export default function TaskBoard({
       const placed = outcome.changed + (outcome.skipped ?? 0);
       setSortNote(
         outcome.stoppedReason
-          ? `${moved}${skipped} Stopped early: ${outcome.stoppedReason} Run it again in a minute to continue.`
+          ? `${moved}${skipped} Stopped early: ${outcome.stoppedReason} Run it again to continue.`
           : placed < outcome.total
             ? `${moved}${skipped} Gemini could not place the rest — they are genuinely ambiguous.`
             : `${moved}${skipped}`,
@@ -748,13 +749,17 @@ function CaptureNote({
     );
   } else if (signal.fallbackReason) {
     tone = 'bad';
+    // Gemini was meant to find the date too. Say so when none was read: a
+    // Hebrew "מחר" left in the title is easy to miss.
     body = (
       <>
-        Gemini failed, so keyword rules filed this under <strong>{signal.category}</strong>.{' '}
-        {signal.fallbackReason}
+        Gemini failed, so keyword rules filed this under <strong>{signal.category}</strong>
+        {due ?? ', and no date was read'}. {signal.fallbackReason}
       </>
     );
-  } else if (signal.category === 'Inbox' && !aiEnabled) {
+  } else if (signal.category === 'Inbox' && !aiEnabled && !rulesCanRead(title)) {
+    // Only for text the English keyword lists cannot read at all; English that
+    // simply matched nothing gets the plain note below.
     tone = 'hint';
     body = (
       <>

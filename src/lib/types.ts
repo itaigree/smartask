@@ -67,23 +67,73 @@ export function isBuiltInCategory(value: unknown): value is BuiltInCategory {
   return typeof value === 'string' && (BUILT_IN_CATEGORIES as readonly string[]).includes(value);
 }
 
+/*
+ * Category identity. One rule, used everywhere a category is compared:
+ * two names are the same category when they match after invisible marks are
+ * removed, Unicode is normalised, runs of spaces are collapsed and letter case
+ * is ignored. "Research", "research" and "מחקר" + a right-to-left mark copied
+ * from WhatsApp are each one category, not two.
+ */
+
 /**
- * Clean a category name, or reject it. Whitespace is collapsed; commas are
- * refused because Notion select options cannot contain them; and a name that
- * matches a built-in in any letter case becomes that built-in, so "work" never
- * turns into a second Work.
+ * Marks that never show but make two names differ: direction marks and
+ * embeddings, zero-width spaces, the word joiner and the byte-order mark.
+ */
+const INVISIBLE = /[\u061C\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/g;
+/** Zero-width (non-)joiners shape letters and emoji inside a name, so only stray ones at the ends go. */
+const EDGE_JOINERS = /^[\u200C\u200D\s]+|[\u200C\u200D\s]+$/g;
+
+/** A name with invisible marks removed and Unicode normalised; spacing inside is kept. */
+function cleanCategoryText(raw: string): string {
+  return raw.replace(INVISIBLE, '').normalize('NFC').replace(EDGE_JOINERS, '');
+}
+
+/** What two names are compared by. Equal keys mean the same category. */
+export function categoryKey(name: string): string {
+  return cleanCategoryText(name).replace(/\s+/g, ' ').toLowerCase();
+}
+
+export function sameCategory(a: string, b: string): boolean {
+  return categoryKey(a) === categoryKey(b);
+}
+
+/** The built-in a name means in any letter case or marking, if any. */
+function builtInFor(name: string): BuiltInCategory | undefined {
+  const key = categoryKey(name);
+  return BUILT_IN_CATEGORIES.find((c) => c.toLowerCase() === key);
+}
+
+/**
+ * Clean a category name typed in the app (or given by Gemini), or reject it.
+ * Invisible marks go and whitespace is collapsed; commas are refused because
+ * Notion select options cannot contain them; and a built-in in any letter case
+ * becomes that built-in, so "work" never turns into a second Work.
  */
 export function normalizeCategoryName(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
-  const name = raw.replace(/\s+/g, ' ').trim();
+  const name = cleanCategoryText(raw).replace(/\s+/g, ' ');
   if (!name || name.length > MAX_CATEGORY_LENGTH || name.includes(',')) return null;
-  const builtIn = BUILT_IN_CATEGORIES.find((c) => c.toLowerCase() === name.toLowerCase());
-  return builtIn ?? name;
+  return builtInFor(name) ?? name;
+}
+
+/**
+ * A category name read back from where tasks are kept (Notion, or a list
+ * learned from tasks). Any non-empty name is kept as it is stored — the
+ * length and comma rules are for names typed here — so a long name made in
+ * Notion is shown and written back unchanged, not read as Inbox. Only
+ * invisible marks and spaces at the ends go, and a built-in in other casing
+ * is the built-in.
+ */
+export function readCategoryName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = cleanCategoryText(raw);
+  if (!name) return null;
+  return builtInFor(name) ?? name;
 }
 
 /** A usable category name — built in or custom. */
 export function isCategory(value: unknown): value is Category {
-  return normalizeCategoryName(value) !== null;
+  return readCategoryName(value) !== null;
 }
 
 export function isPriority(value: unknown): value is Priority {

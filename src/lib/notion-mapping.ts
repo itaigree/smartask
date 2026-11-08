@@ -1,6 +1,6 @@
 import {
   CATEGORIES, PRIORITIES, STATUSES,
-  normalizeCategoryName, isPriority, isStatus,
+  readCategoryName, isPriority, isStatus,
   type NewTask, type Task, type TaskPatch,
 } from './types.ts';
 import { addDays, localDateOf, toISODate } from './parse.ts';
@@ -119,8 +119,10 @@ export function pageToTask(page: unknown): Task | null {
   return {
     id: p.id,
     title: readTitle(props, PROPS.title) || 'Untitled task',
-    // A category added in the app, or straight in Notion, is kept as is.
-    category: normalizeCategoryName(category) ?? 'Inbox',
+    // A category added in the app, or straight in Notion, is kept as Notion
+    // spells it — even one longer than the app lets you type — so it is shown,
+    // counted and written back unchanged instead of being read as Inbox.
+    category: readCategoryName(category) ?? 'Inbox',
     priority: isPriority(priority) ? priority : 'Normal',
     status,
     due: readDate(props, PROPS.due),

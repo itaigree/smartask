@@ -1,4 +1,6 @@
-import { BUILT_IN_CATEGORIES, normalizeCategoryName, type Category, type Task } from './types.ts';
+import {
+  BUILT_IN_CATEGORIES, categoryKey, readCategoryName, type Category, type Task,
+} from './types.ts';
 
 /**
  * The user's category list: the built-ins, then their own.
@@ -6,53 +8,63 @@ import { BUILT_IN_CATEGORIES, normalizeCategoryName, type Category, type Task } 
  * Their own ones come from two places, merged: names they created on this
  * device (kept in local storage), and names found on their tasks — which is how
  * a category made on another phone, or added straight in Notion, shows up here.
+ *
+ * Names are compared by `categoryKey` (letter case and invisible marks
+ * ignored). Where the saved list and the tasks spell one category differently,
+ * the tasks' spelling wins: it is what the store holds, so it is also what the
+ * next task filed there should get.
  */
 
 const STORAGE_KEY = 'smartask.categories.v1';
 
+/** Custom names only, one per category, in the order given; the first spelling wins. */
+function uniqueCustom(raw: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const name = readCategoryName(item);
+    if (!name || !isCustomCategory(name) || seen.has(categoryKey(name))) continue;
+    seen.add(categoryKey(name));
+    out.push(name);
+  }
+  return out;
+}
+
 /** Built-ins in their usual order (Inbox last), then custom names A to Z. */
 export function categoryList(custom: readonly string[], tasks: readonly Task[] = []): Category[] {
   const builtIns = BUILT_IN_CATEGORIES.filter((c) => c !== 'Inbox');
-  const seen = new Set<string>(BUILT_IN_CATEGORIES.map((c) => c.toLowerCase()));
-  const extra: string[] = [];
-
-  for (const raw of [...custom, ...tasks.map((t) => t.category)]) {
-    const name = normalizeCategoryName(raw);
-    if (!name || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase());
-    extra.push(name);
-  }
-
+  const extra = uniqueCustom([...tasks.map((t) => t.category), ...custom]);
   extra.sort((a, b) => a.localeCompare(b));
   return [...builtIns, ...extra, 'Inbox'];
 }
 
-/** Custom names on tasks that the saved list does not know yet. */
-export function unseenCategories(custom: readonly string[], tasks: readonly Task[]): string[] {
-  const known = new Set(categoryList(custom).map((c) => c.toLowerCase()));
-  const found: string[] = [];
-  for (const task of tasks) {
-    const name = normalizeCategoryName(task.category);
-    if (name && !known.has(name.toLowerCase())) {
-      known.add(name.toLowerCase());
-      found.push(name);
-    }
-  }
-  return found;
+/**
+ * The saved list brought up to date with the tasks: a saved name takes the
+ * spelling the tasks use, a second spelling of one category is dropped, and
+ * custom names found only on tasks are added. Null when nothing changed, so
+ * there is nothing to save.
+ */
+export function learnCategories(custom: readonly string[], tasks: readonly Task[]): string[] | null {
+  const onTasks = new Map(uniqueCustom(tasks.map((t) => t.category)).map((n) => [categoryKey(n), n]));
+  const next = uniqueCustom([...custom, ...onTasks.values()])
+    .map((name) => onTasks.get(categoryKey(name)) ?? name);
+
+  const unchanged = next.length === custom.length && next.every((name, i) => name === custom[i]);
+  return unchanged ? null : next;
 }
 
 export function isCustomCategory(name: string): boolean {
-  return !BUILT_IN_CATEGORIES.some((c) => c.toLowerCase() === name.toLowerCase());
+  const key = categoryKey(name);
+  return !BUILT_IN_CATEGORIES.some((c) => categoryKey(c) === key);
 }
 
 export function loadCustomCategories(): string[] {
   if (typeof window === 'undefined') return [];
   try {
     const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]');
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map(normalizeCategoryName)
-      .filter((n): n is string => n !== null && isCustomCategory(n));
+    // Names learned from tasks may be longer than a typed one, so the
+    // lenient read rule applies here, not the rule for typed names.
+    return Array.isArray(parsed) ? uniqueCustom(parsed) : [];
   } catch {
     return [];
   }
@@ -73,6 +85,6 @@ export function saveCustomCategories(names: readonly string[]): void {
  */
 export function categoryHue(name: string): number {
   let hash = 0;
-  for (const ch of name.toLowerCase()) hash = (hash * 31 + ch.codePointAt(0)!) >>> 0;
+  for (const ch of categoryKey(name)) hash = (hash * 31 + ch.codePointAt(0)!) >>> 0;
   return hash % 360;
 }

@@ -51,12 +51,12 @@ test('a complete Notion page maps to a complete Task', () => {
 test('a page hand-edited in Notion falls back instead of throwing', () => {
   const task = pageToTask(page({
     [PROPS.title]: { title: [] },
-    [PROPS.category]: { select: { name: 'Bad, name' } },
+    [PROPS.category]: { select: { name: ' \u200F ' } },
     [PROPS.priority]: { select: null },
     // Status, Due, Tags, Note removed entirely.
   }));
   assert.equal(task?.title, 'Untitled task');
-  assert.equal(task?.category, 'Inbox', 'a name Notion could never hold falls back to Inbox');
+  assert.equal(task?.category, 'Inbox', 'a name with nothing visible in it falls back to Inbox');
   assert.equal(task?.priority, 'Normal');
   assert.equal(task?.status, 'Todo');
   assert.equal(task?.due, null);
@@ -130,6 +130,25 @@ test('a category the user created — in the app or in Notion — is kept, not t
     [PROPS.category]: { select: { name: 'work' } },
   }));
   assert.equal(lower?.category, 'Work', 'a built-in in other casing is not a second category');
+});
+
+test('R2-1: a Notion category longer than the app lets you type is kept, not read as Inbox', () => {
+  const long = 'Thesis chapter 3 revisions for my supervisor';
+  const task = pageToTask(page({
+    [PROPS.title]: { title: [{ plain_text: 'x' }] },
+    [PROPS.category]: { select: { name: long } },
+  }));
+  assert.equal(task?.category, long, 'so Sort with Gemini leaves it alone and the picker lists it');
+});
+
+test('R2-12: spacing inside a Notion category is kept, so writing it back matches the option', () => {
+  const task = pageToTask(page({
+    [PROPS.title]: { title: [{ plain_text: 'x' }] },
+    [PROPS.category]: { select: { name: 'Side  Project' } },
+  }));
+  assert.equal(task?.category, 'Side  Project');
+  const props = patchToProperties({ category: task!.category }) as Record<string, any>;
+  assert.equal(props[PROPS.category].select.name, 'Side  Project');
 });
 
 test('R1-2: a Notion date with "Include time" becomes the local day', () => {

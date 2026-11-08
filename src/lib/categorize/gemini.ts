@@ -1,7 +1,9 @@
 import {
-  BUILT_IN_CATEGORIES, normalizeCategoryName, type BuiltInCategory, type Category,
+  BUILT_IN_CATEGORIES, categoryKey, normalizeCategoryName, readCategoryName, sameCategory,
+  type BuiltInCategory, type Category,
 } from '../types.ts';
 import { addDays, toISODate } from '../parse.ts';
+import { categoryNamedByTags } from './rules.ts';
 import type { CategorySignal, Categorizer, RuleInput } from './index.ts';
 
 /**
@@ -79,11 +81,18 @@ function describeCategory(name: string): string {
 }
 
 /**
- * The categories to offer: the built-ins plus any the user created, Inbox
- * kept last so it reads as the fallback it is.
+ * The categories to offer: the built-ins plus any the user created, one entry
+ * per category, Inbox kept last so it reads as the fallback it is.
  */
 function offered(categories: readonly string[]): string[] {
-  const list = [...new Set([...BUILT_IN_CATEGORIES, ...categories])].filter((c) => c !== 'Inbox');
+  const seen = new Set<string>();
+  const list: string[] = [];
+  for (const raw of [...BUILT_IN_CATEGORIES, ...categories]) {
+    const name = readCategoryName(raw);
+    if (!name || name === 'Inbox' || seen.has(categoryKey(name))) continue;
+    seen.add(categoryKey(name));
+    list.push(name);
+  }
   return [...list, 'Inbox'];
 }
 
@@ -167,12 +176,70 @@ export function buildPrompt(
   return lines.join('\n');
 }
 
+/** The fields the reply's JSON is asked for; anything may be missing or mistyped. */
+interface ReplyFields {
+  category?: unknown;
+  confidence?: unknown;
+  reason?: unknown;
+  due?: unknown;
+  title?: unknown;
+}
+
+/**
+ * Read the reply's JSON object, mending what models typically break.
+ *
+ * A Hebrew acronym written with a plain quote (דו"ח, עו"ד, מע"מ) ends the
+ * string early. A quote with a letter on both sides is never JSON syntax, so it
+ * is escaped and the reply read again. Failing that, the category and date are
+ * picked out of the text one by one; the free-text fields are left alone.
+ */
+function readReplyFields(json: string): ReplyFields | null {
+  const mended = json.replace(/(?<=[\p{L}\p{N}])"(?=[\p{L}\p{N}])/gu, '\\"');
+  for (const candidate of [json, mended]) {
+    try {
+      return JSON.parse(candidate) as ReplyFields;
+    } catch {
+      // Try the next, or pick fields out below.
+    }
+  }
+  const category = /"category"\s*:\s*"([^"\n]*)"/.exec(json)?.[1];
+  if (category === undefined) return null;
+  return {
+    category,
+    due: /"due"\s*:\s*"(\d{4}-\d{2}-\d{2})"/.exec(json)?.[1] ?? null,
+    confidence: /"confidence"\s*:\s*([\d.]+)/.exec(json)?.[1],
+  };
+}
+
+/**
+ * A reply with no JSON at all: accept it only when it is short and names
+ * exactly one category. Longer names first, so "Home Office" is not also read
+ * as "Home".
+ */
+function bareCategory(text: string, choices: readonly string[]): CategorySignal | null {
+  if (text.split(/\s+/).length > 8) return null;
+  let rest = text;
+  const named: string[] = [];
+  for (const category of [...choices].sort((a, b) => b.length - a.length)) {
+    const escaped = category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^\\p{L}])${escaped}(?=$|[^\\p{L}])`, 'iu');
+    if (re.test(rest)) {
+      named.push(category);
+      rest = rest.replace(re, '$1 ');
+    }
+  }
+  return named.length === 1
+    ? { category: named[0], confidence: 0.6, reason: 'classified by Gemini' }
+    : null;
+}
+
 /**
  * Pull a usable signal out of whatever the model said.
  *
- * Models wrap JSON in code fences, add a preamble, or answer with a bare word.
- * All of those are recoverable, so parse leniently and validate strictly — an
- * unrecognised category is discarded rather than trusted.
+ * Models wrap JSON in code fences, add a preamble, break a string with a stray
+ * quote, or answer with a bare word. Those are recoverable, so parse leniently
+ * and validate strictly — an unrecognised category is discarded rather than
+ * trusted.
  */
 export function parseGeminiReply(
   text: string,
@@ -181,73 +248,53 @@ export function parseGeminiReply(
 ): CategorySignal | null {
   if (!text) return null;
 
-  // Match case-insensitively, but always return the user's own spelling.
+  // Matched by the one category rule, but always returned in the user's own spelling.
   const choices = offered(allowed);
   const canonical = (name: unknown): Category | null =>
-    typeof name === 'string'
-      ? choices.find((c) => c.toLowerCase() === name.trim().toLowerCase()) ?? null
-      : null;
+    typeof name === 'string' ? choices.find((c) => sameCategory(c, name)) ?? null : null;
 
   const stripped = text.replace(/```(?:json)?/gi, '').trim();
-  const match = /\{[\s\S]*\}/.exec(stripped);
 
-  if (match) {
-    try {
-      const parsed = JSON.parse(match[0]) as {
-        category?: unknown;
-        confidence?: unknown;
-        reason?: unknown;
-        due?: unknown;
-        title?: unknown;
-      };
-      let category = canonical(parsed.category);
-      let created = false;
-      if (!category && allowNew) {
-        const fresh = acceptNewCategory(parsed.category, choices);
-        if (fresh) {
-          category = fresh.name;
-          created = fresh.created;
-        }
-      }
-      if (category) {
-        const raw = Number(parsed.confidence);
-        const confidence = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.8;
-        const reason = typeof parsed.reason === 'string' && parsed.reason.trim()
-          ? parsed.reason.trim().slice(0, 80)
-          : 'classified by Gemini';
-        return {
-          category,
-          confidence,
-          reason,
-          ...(created ? { created: true } : {}),
-          // Unvalidated here; sanitizeExtraction() decides what survives.
-          extracted: {
-            due: typeof parsed.due === 'string' ? parsed.due : null,
-            title: typeof parsed.title === 'string' ? parsed.title : null,
-          },
-        };
-      }
-      // The reply was JSON with a category we cannot use. Do not go hunting for
-      // a category word in its reason or title ("…needs work" is not Work).
-      if (typeof parsed.category === 'string') return null;
-    } catch {
-      // Fall through to the bare-word search below.
+  // Braces mean the reply is JSON, however broken. Its category comes from the
+  // "category" field or not at all — never from a word in its reason or title
+  // ("expense report for work" is not Work).
+  const start = stripped.indexOf('{');
+  if (start < 0) return bareCategory(stripped, choices);
+
+  const end = stripped.lastIndexOf('}');
+  const parsed = readReplyFields(stripped.slice(start, end > start ? end + 1 : undefined));
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  let category = canonical(parsed.category);
+  let created = false;
+  if (!category && allowNew) {
+    const fresh = acceptNewCategory(parsed.category, choices);
+    if (fresh) {
+      category = fresh.name;
+      created = fresh.created;
     }
   }
+  if (!category) return null;
 
-  // No usable JSON: accept a reply that is just a category name. Longer names
-  // first, so "Home Office" is not read as "Home".
-  for (const category of [...choices].sort((a, b) => b.length - a.length)) {
-    const escaped = category.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`(^|[^\\p{L}])${escaped}($|[^\\p{L}])`, 'iu').test(stripped)) {
-      return { category, confidence: 0.6, reason: 'classified by Gemini' };
-    }
-  }
-
-  return null;
+  const raw = Number(parsed.confidence);
+  const confidence = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.8;
+  const reason = typeof parsed.reason === 'string' && parsed.reason.trim()
+    ? parsed.reason.trim().slice(0, 80)
+    : 'classified by Gemini';
+  return {
+    category,
+    confidence,
+    reason,
+    ...(created ? { created: true } : {}),
+    // Unvalidated here; sanitizeExtraction() decides what survives.
+    extracted: {
+      due: typeof parsed.due === 'string' ? parsed.due : null,
+      title: typeof parsed.title === 'string' ? parsed.title : null,
+    },
+  };
 }
 
-/** Longest name the model may invent; the user's own can be longer (up to 40). */
+/** Longest name the model may invent; the user's own can be longer. */
 const MAX_NEW_CATEGORY_LENGTH = 24;
 
 /**
@@ -265,16 +312,19 @@ const HEBREW_BUILT_INS: Record<string, BuiltInCategory> = {
   'תיבת דואר': 'Inbox', 'דואר נכנס': 'Inbox',
 };
 
-/** Spellings of one name that count as the same category: "Cars"/"car", "Glasses"/"glass". */
-function categoryKeys(name: string): string[] {
-  const letters = name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+/**
+ * Spellings of one name a model may use for an existing category, looser than
+ * the app's own rule: "Cars"/"car", "Glasses"/"glass", "Side-project"/"Side Project".
+ */
+function twinKeys(name: string): string[] {
+  const letters = categoryKey(name).replace(/[^\p{L}\p{N}]/gu, '');
   if (letters.length <= 3) return [letters];
   return [letters, letters.replace(/s$/, ''), letters.replace(/es$/, ''), letters.replace(/ies$/, 'y')];
 }
 
-function sameCategory(a: string, b: string): boolean {
-  const keys = new Set(categoryKeys(a));
-  return categoryKeys(b).some((k) => keys.has(k));
+function isTwin(a: string, b: string): boolean {
+  const keys = new Set(twinKeys(a));
+  return twinKeys(b).some((k) => keys.has(k));
 }
 
 /**
@@ -296,7 +346,7 @@ export function acceptNewCategory(
   const builtIn = HEBREW_BUILT_INS[name];
   if (builtIn && existing.includes(builtIn)) return { name: builtIn, created: false };
 
-  const twin = existing.find((c) => sameCategory(c, name));
+  const twin = existing.find((c) => isTwin(c, name));
   if (twin) return { name: twin, created: false };
 
   if (name.length > MAX_NEW_CATEGORY_LENGTH) return null;
@@ -328,14 +378,48 @@ function isRealDate(iso: string): boolean {
   return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
+/** The most words a date phrase takes: "עד יום חמישי הבא", "by next Friday at noon". */
+const MAX_DATE_WORDS = 4;
+
+/**
+ * Words that turn a task around. They are never part of a date, so never cut
+ * with one. Apostrophes are already gone here: "don't" is "dont".
+ */
+const NEGATION =
+  /^(?:not|no|never|nor|without|dont|doesnt|didnt|wont|cant|cannot|isnt|arent|shouldnt|mustnt|[וש]?(?:לא|אל|אין|בלי|מבלי|אסור|אף))$/;
+
+/**
+ * Whether `title` is `original` with one short run of words cut out — the date
+ * phrase — and nothing else changed. Words may not be reordered, reworded or
+ * added; at most one more word is cut than kept, so a stub such as the date
+ * alone is never all that is left; and a "not" is never among the words cut.
+ */
+export function isDateCut(original: string, title: string): boolean {
+  const from = words(original);
+  const kept = words(title);
+  const cut = from.length - kept.length;
+  if (!kept.length || cut < 0 || cut > MAX_DATE_WORDS || cut > kept.length + 1) return false;
+
+  // The kept words must be a run from the start plus a run from the end.
+  let head = 0;
+  while (head < kept.length && kept[head] === from[head]) head += 1;
+  let tail = 0;
+  while (head + tail < kept.length && kept[kept.length - 1 - tail] === from[from.length - 1 - tail]) {
+    tail += 1;
+  }
+  if (head + tail < kept.length) return false;
+
+  return !from.slice(head, head + cut).some((w) => NEGATION.test(w));
+}
+
 /**
  * Decide which parts of what the model extracted can be trusted.
  *
  * - The date must be a real date, and plausible for a task: up to a week in the
  *   past (something already overdue), no more than three years ahead.
- * - The title may only *remove* words. Every word in it must already be in the
- *   original, so a model that translates or rephrases the task is ignored and
- *   the user's own words are kept.
+ * - The title may only *cut* the date words: see {@link isDateCut}. A model
+ *   that translates, rephrases, reorders or over-shortens the task is ignored
+ *   and the user's own words are kept.
  */
 export function sanitizeExtraction(
   raw: { due: string | null; title: string | null } | undefined,
@@ -353,10 +437,8 @@ export function sanitizeExtraction(
 
   let title: string | null = null;
   const candidate = raw.title?.trim() ?? '';
-  if (candidate && candidate.length <= originalTitle.length) {
-    const allowed = new Set(words(originalTitle));
-    const used = words(candidate);
-    if (used.length > 0 && used.every((w) => allowed.has(w))) title = candidate;
+  if (candidate && candidate.length <= originalTitle.length && isDateCut(originalTitle, candidate)) {
+    title = candidate;
   }
 
   return { due, title };
@@ -372,23 +454,65 @@ export function extractText(body: unknown): string {
   return parts.map((p) => p?.text ?? '').join('').trim();
 }
 
+/** The parts of Google's error details the app reads. */
+interface ErrorDetail {
+  reason?: string;
+  /** QuotaFailure: which quota ran out, e.g. `GenerateRequestsPerDayPerProjectPerModel-FreeTier`. */
+  violations?: Array<{ quotaId?: string; quotaValue?: string | number }>;
+  /** RetryInfo, e.g. "17s". */
+  retryDelay?: string;
+}
+
+/** "17.2s" as "18 seconds", "130s" as "3 minutes"; null when absent or unreadable. */
+function waitText(delay: string | undefined): string | null {
+  const seconds = Math.ceil(Number(/^(\d+(?:\.\d+)?)s$/.exec(delay ?? '')?.[1]));
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+/**
+ * A rate-limit refusal, worded for which limit it was. A per-minute limit
+ * passes; a used-up daily quota lasts until Google resets it; and a model with
+ * no free quota at all never works, so only another model helps. Daily quotas
+ * are per model, so another model helps there too.
+ */
+function describeRateLimit(message: string, details: ErrorDetail[]): string {
+  const violations = details.flatMap((d) => d?.violations ?? []);
+  if (violations.some((v) => String(v?.quotaValue) === '0') || /\blimit: ?0\b/.test(message)) {
+    return 'This Gemini model has no free quota on your key. Pick another in AI settings.';
+  }
+  if (violations.some((v) => /PerDay/i.test(v?.quotaId ?? ''))) {
+    return 'The daily Gemini limit for this model is used up. It resets within a day, or you can pick another model in AI settings.';
+  }
+  const wait = waitText(details.find((d) => typeof d?.retryDelay === 'string')?.retryDelay);
+  return wait
+    ? `Gemini rate limit reached. Try again in ${wait}.`
+    : 'Gemini rate limit reached. It will work again shortly.';
+}
+
 /** Turn Google's error envelope into one sentence worth showing. */
 export function describeGeminiError(body: unknown, status?: number): string {
   const error = (body as { error?: { message?: string; status?: string; details?: unknown[] } })
     ?.error;
+  const details = (Array.isArray(error?.details) ? error.details : []) as ErrorDetail[];
 
-  const reason = (error?.details as Array<{ reason?: string }> | undefined)?.find(
-    (d) => typeof d?.reason === 'string',
-  )?.reason;
+  const reason = details.find((d) => typeof d?.reason === 'string')?.reason;
 
   if (reason === 'API_KEY_INVALID') {
     return 'Google rejected the API key. Check you pasted it in full.';
+  }
+  if (reason === 'API_KEY_HTTP_REFERRER_BLOCKED' || /referr?er .*blocked/i.test(error?.message ?? '')) {
+    // The browser sends only the site's address, never the page's path, so a
+    // restriction naming the path refuses every request.
+    return "The key's website restriction blocks this site. Allow this site's address followed by /* in Google Cloud credentials.";
   }
   if (reason === 'SERVICE_DISABLED' || error?.status === 'PERMISSION_DENIED') {
     return 'That key cannot use the Gemini API. Create one at aistudio.google.com/apikey.';
   }
   if (status === 429 || error?.status === 'RESOURCE_EXHAUSTED') {
-    return 'Gemini rate limit reached. It will work again shortly.';
+    return describeRateLimit(error?.message ?? '', details);
   }
   if (status === 404) {
     return 'That Gemini model is not available to your key. Pick another in AI settings.';
@@ -515,6 +639,20 @@ export function pickDefaultModel(models: GeminiModel[]): string | null {
 }
 
 /**
+ * The options for the model dropdown. A saved model Google no longer lists — a
+ * retired one, say — stays first, marked unavailable, so the dropdown shows the
+ * model really in use and picking any listed one is a real change.
+ */
+export function modelChoices(
+  models: GeminiModel[],
+  current: string,
+): Array<GeminiModel & { unavailable?: boolean }> {
+  if (!models.length) return [{ id: current, label: current }];
+  if (models.some((m) => m.id === current)) return models;
+  return [{ id: current, label: `${current} (unavailable)`, unavailable: true }, ...models];
+}
+
+/**
  * One classification call. Throws {@link GeminiError}; callers fall back to rules.
  *
  * Gemini sees every category the user has and picks the best fit. Only when
@@ -531,22 +669,24 @@ export async function classifyWithGemini(
   const prompt = buildPrompt(input, categories, { allowNew });
   const path = `/models/${encodeURIComponent(settings.model)}:generateContent`;
 
-  // temperature 0 for a stable answer. maxOutputTokens is deliberately NOT set:
-  // on a reasoning model a small budget is spent thinking and the reply comes
-  // back empty.
+  // temperature 0 for a stable answer, and JSON mode so the model escapes a
+  // quote inside a Hebrew acronym (דו"ח) instead of breaking the reply.
+  // maxOutputTokens is deliberately NOT set: on a reasoning model a small
+  // budget is spent thinking and the reply comes back empty.
   const full = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0 },
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
   };
 
   let body: unknown;
   try {
     body = await call(path, settings.apiKey, { method: 'POST', body: JSON.stringify(full) });
   } catch (error) {
-    // If the API rejected a field rather than the key, retry with the smallest
-    // body the API accepts, so an option name going stale cannot break the app.
+    // If the API rejected an option rather than the key — a field name gone
+    // stale, or a model without JSON mode — retry with the smallest body the
+    // API accepts, so an option cannot break the app.
     const message = error instanceof Error ? error.message : '';
-    if (!/invalid|unknown|unsupported|field/i.test(message)) throw error;
+    if (!/invalid|unknown|unsupported|not enabled|json|mime|field/i.test(message)) throw error;
     body = await call(path, settings.apiKey, {
       method: 'POST',
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
@@ -555,11 +695,15 @@ export async function classifyWithGemini(
 
   const signal = parseGeminiReply(extractText(body), categories, { allowNew });
   if (!signal) throw new GeminiError('Gemini replied with no usable category.');
-  return {
-    ...signal,
-    source: 'gemini',
-    extracted: sanitizeExtraction(signal.extracted, input.title, input.now ?? new Date()),
-  };
+  const extracted = sanitizeExtraction(signal.extracted, input.title, input.now ?? new Date());
+
+  // A tag that names a category wins outright, as with the keyword rules —
+  // `@work` is a deliberate statement. Gemini still found the date.
+  const tagged = categoryNamedByTags(input.tags, offered(categories));
+  if (tagged) {
+    return { category: tagged, confidence: 1, reason: 'named by a tag', source: 'gemini', extracted };
+  }
+  return { ...signal, source: 'gemini', extracted };
 }
 
 /**
@@ -576,12 +720,14 @@ export function createGeminiCategorizer(
   return {
     name: `gemini:${settings.model}`,
     async categorize(input) {
+      const categories = input.categories ?? getCategories();
       try {
-        return await classifyWithGemini(settings, input, getCategories());
+        return await classifyWithGemini(settings, input, categories);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Gemini request failed.';
         onError?.(reason);
-        const signal = await fallback.categorize(input);
+        // The rules get the same list, so `@research` still names Research.
+        const signal = await fallback.categorize({ ...input, categories });
         return { ...signal, source: 'rules', fallbackReason: reason };
       }
     },

@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   clearGeminiConfig, maskToken, saveGeminiConfig, validateApiKey,
   type GeminiConfig,
 } from '../lib/config.ts';
 import {
-  classifyWithGemini, listGeminiModels, pickDefaultModel, type GeminiModel,
+  classifyWithGemini, listGeminiModels, modelChoices, pickDefaultModel, type GeminiModel,
 } from '../lib/categorize/gemini.ts';
 
 type Status =
@@ -36,6 +36,8 @@ export default function AiSettings({
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
 
   const busy = status.kind === 'busy';
+  /** For the key-restriction advice; this panel only ever renders in the browser. */
+  const site = typeof window === 'undefined' ? null : window.location.origin;
 
   async function connect(event: React.FormEvent) {
     event.preventDefault();
@@ -97,6 +99,18 @@ export default function AiSettings({
     }
   }
 
+  // Read the list as soon as the panel opens, so a saved model Google no
+  // longer offers — a retired one — shows as unavailable straight away. The
+  // error message for that model sends people here to pick another.
+  const savedKey = config?.apiKey;
+  useEffect(() => {
+    // Only when the key changes; loadModels itself skips a list already read.
+    if (savedKey) void loadModels();
+  }, [savedKey]);
+
+  const choices = config ? modelChoices(models, config.model) : [];
+  const unavailable = choices.some((m) => m.unavailable);
+
   function chooseModel(model: string) {
     if (!config) return;
     const next = { ...config, model };
@@ -140,15 +154,21 @@ export default function AiSettings({
                 onFocus={loadModels}
                 onChange={(e) => chooseModel(e.target.value)}
                 disabled={busy}
+                aria-describedby={unavailable ? 'model-unavailable' : undefined}
               >
-                {(models.length ? models : [{ id: config.model, label: config.model }]).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
+                {choices.map((m) => (
+                  <option key={m.id} value={m.id} disabled={m.unavailable}>
+                    {m.unavailable ? m.label : m.id}
                   </option>
                 ))}
               </select>
             </dd>
           </dl>
+          {unavailable && (
+            <p className="field-hint" id="model-unavailable">
+              Google no longer offers {config.model} to your key. Pick another model.
+            </p>
+          )}
 
           <div className="button-row">
             <button type="button" className="primary-button" onClick={test} disabled={busy}>
@@ -200,7 +220,7 @@ export default function AiSettings({
         </p>
         <p>
           A key in a web page can be read by anything running on this domain. Google lets you
-          restrict a key to specific websites: in{' '}
+          limit a key to one website: in{' '}
           <a
             href="https://console.cloud.google.com/apis/credentials"
             target="_blank"
@@ -208,8 +228,11 @@ export default function AiSettings({
           >
             Google Cloud credentials
           </a>
-          , set an <strong>HTTP referrer</strong> restriction to this site&rsquo;s address. Then a
-          copied key is useless anywhere else. Worth the two minutes.
+          , choose the <strong>Websites</strong> restriction and add{' '}
+          {site ? <code>{site}/*</code> : <>this site&rsquo;s address followed by <code>/*</code></>}
+          . Use the address, not this page&rsquo;s full path: the browser sends Google only the
+          address, so a path never matches. Other websites then cannot use a copied key, but
+          someone outside a browser still could, so keep it to yourself.
         </p>
       </div>
     </div>
