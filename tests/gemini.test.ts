@@ -4,7 +4,7 @@ import {
   buildPrompt, calendarLines, sanitizeExtraction,
   parseGeminiReply, extractText, describeGeminiError,
   scoreModel, pickDefaultModel, listGeminiModels, createGeminiCategorizer,
-  classifyWithGemini, GeminiError, acceptNewCategory,
+  classifyWithGemini, GeminiError, acceptNewCategory, GEMINI_TIMEOUT_MS,
 } from '../src/lib/categorize/gemini.ts';
 import { rulesCategorizer } from '../src/lib/categorize/rules.ts';
 import { CATEGORIES } from '../src/lib/types.ts';
@@ -371,4 +371,24 @@ test('review: -ies plurals, Hebrew built-in names, and no category fished from t
   const reply = '{"category":"Car Maintenance And Repair","new":true,"reason":"the car needs work"}';
   assert.equal(parseGeminiReply(reply, CATEGORIES, { allowNew: true }), null);
   assert.equal(parseGeminiReply('{"category":"Pets, Animals","title":"feed the cat before work"}', CATEGORIES, { allowNew: true }), null);
+});
+
+test('R1-12: a Gemini request that never answers times out and the rules file the task', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const hang: typeof fetch = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+    });
+  const errors: string[] = [];
+  const categorizer = createGeminiCategorizer(
+    { apiKey: 'k', model: 'gemini-flash' }, rulesCategorizer, (m) => errors.push(m),
+  );
+  const pending = withFetch(hang, () => categorizer.categorize({ title: 'pay the electricity bill' }));
+  await Promise.resolve();
+  t.mock.timers.tick(GEMINI_TIMEOUT_MS + 1);
+  const signal = await pending;
+  assert.equal(signal.source, 'rules');
+  assert.equal(signal.category, 'Finance');
+  assert.match(signal.fallbackReason ?? '', /took too long/);
+  assert.match(errors[0], /took too long/);
 });

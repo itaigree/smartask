@@ -15,11 +15,15 @@ export interface SortProgress {
   done: number;
   total: number;
   changed: number;
+  /** Tasks left alone because they changed during the run (moved, done, deleted). */
+  skipped?: number;
 }
 
 export interface SortOutcome extends SortProgress {
   /** Present when the run stopped early; the remaining tasks are untouched. */
   stoppedReason?: string;
+  /** True when the run was cancelled (the board closed, or the AI settings changed). */
+  cancelled?: boolean;
 }
 
 export interface SortOptions {
@@ -28,7 +32,19 @@ export interface SortOptions {
   onUpdated?: (task: Task) => void;
   /** Injected so tests do not actually wait. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The task as it is *now*. The run takes a while, and the user keeps
+   * working: a task they moved, completed or deleted meanwhile is skipped,
+   * never overwritten.
+   */
+  current?: (id: string) => Task | undefined;
+  /** Stops the run before the next request or write. */
+  signal?: AbortSignal;
 }
+
+/** Still an open Inbox task, so still the sort's to file. */
+const stillInbox = (task: Task | undefined): task is Task =>
+  task !== undefined && task.category === 'Inbox' && task.status !== 'Done';
 
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -44,12 +60,27 @@ export async function sortInbox(
   update: (task: Task, category: Category) => Promise<Task>,
   options: SortOptions = {},
 ): Promise<SortOutcome> {
-  const { delayMs = 1500, onProgress, onUpdated, sleep = realSleep } = options;
+  const { delayMs = 1500, onProgress, onUpdated, sleep = realSleep, current, signal: abort } = options;
   const targets = inboxTasks(tasks);
-  const progress: SortProgress = { done: 0, total: targets.length, changed: 0 };
+  const progress: SortProgress = { done: 0, total: targets.length, changed: 0, skipped: 0 };
+  const live = (task: Task) => (current ? current(task.id) : task);
+  const cancelled = (): SortOutcome => ({ ...progress, cancelled: true });
+  const skip = () => {
+    progress.skipped = (progress.skipped ?? 0) + 1;
+    progress.done += 1;
+    onProgress?.({ ...progress });
+  };
 
-  for (const [index, task] of targets.entries()) {
+  for (const [index, queued] of targets.entries()) {
+    if (abort?.aborted) return cancelled();
     if (index > 0) await sleep(delayMs);
+    if (abort?.aborted) return cancelled();
+
+    const task = live(queued);
+    if (!stillInbox(task)) {
+      skip();
+      continue;
+    }
 
     let signal: CategorySignal;
     try {
@@ -66,11 +97,19 @@ export async function sortInbox(
       };
     }
 
+    if (abort?.aborted) return cancelled();
+    // Gemini took a moment: if the user filed it themselves meanwhile, theirs wins.
+    const latest = live(task);
+    if (!stillInbox(latest)) {
+      skip();
+      continue;
+    }
+
     // Still Inbox means the model genuinely could not tell. Leave it alone
     // rather than spend a Notion write on a no-op.
     if (signal.category !== 'Inbox') {
       try {
-        const saved = await update(task, signal.category);
+        const saved = await update(latest, signal.category);
         progress.changed += 1;
         onUpdated?.(saved);
       } catch (error) {

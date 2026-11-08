@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { maskToken, notionDatabaseUrl } from '../lib/config.ts';
 import { ValidationError } from '../lib/capture.ts';
-import { LocalStoreError } from '../lib/local-store.ts';
+import { LocalStoreError, TASKS_KEY } from '../lib/local-store.ts';
 import { describeNotionError } from '../lib/notion.ts';
 import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
@@ -11,7 +11,10 @@ import { categoryList, unseenCategories } from '../lib/categories.ts';
 import CategoryPicker from './CategoryPicker.tsx';
 import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
-import type { Task } from '../lib/types.ts';
+import type { Task, TaskPatch } from '../lib/types.ts';
+import {
+  forgetOldWrites, mergeRead, replaceTask, restoreTask, type RecentWrite,
+} from '../lib/board-sync.ts';
 import { buildView, countTasks, daysUntilDue, type ViewId } from '../lib/views.ts';
 import { dueLabel } from './Chips.tsx';
 import QuickAdd from './QuickAdd.tsx';
@@ -20,6 +23,9 @@ import ViewTabs from './ViewTabs.tsx';
 
 /** Coming back to the app re-reads Notion, but no more often than this. */
 const RETURN_REFRESH_MIN_MS = 10_000;
+
+/** How long a just-ticked task stays in place, struck through, before it leaves the list. */
+const SETTLE_MS = 2_000;
 
 /**
  * Holds the task list client-side so an edit feels instant, and writes straight
@@ -59,7 +65,10 @@ export default function TaskBoard({
 
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [view, setView] = useState<ViewId>('focus');
-  const [error, setError] = useState<string | null>(null);
+  /** Reading the list failed. Stays until a read succeeds; "retry" re-reads. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** A save failed. Says which; dismissed by hand or cleared by the next save. */
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   /** What happened to the last capture — who filed it, and why if it fell back. */
@@ -67,9 +76,32 @@ export default function TaskBoard({
     null,
   );
   const [sorting, setSorting] = useState<SortProgress | null>(null);
-  /** The task whose category picker is open. */
-  const [editing, setEditing] = useState<Task | null>(null);
+  /**
+   * The id of the task whose category picker is open. The id, not the task:
+   * a sort or a refresh may change that task while the sheet is open, and the
+   * sheet must show and save against the task as it is now.
+   */
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [sortNote, setSortNote] = useState<string | null>(null);
+  /**
+   * Tasks just ticked done, shown in place (struck through) for a moment
+   * instead of vanishing: otherwise the next card slides under the finger and a
+   * double tap completes it too. A second tap on the struck card reopens it.
+   */
+  const [settling, setSettling] = useState<ReadonlyMap<string, Task>>(new Map());
+  const settleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  /** The latest list, for callbacks that run after a wait (a sort, a save). */
+  const tasksRef = useRef<Task[] | null>(null);
+  tasksRef.current = tasks;
+
+  /** This device's recent writes, merged into every read (see board-sync.ts). */
+  const recentWrites = useRef(new Map<string, RecentWrite>());
+  /** The newest write per task, so an older answer arriving late is ignored. */
+  const latestWrite = useRef(new Map<string, number>());
+  const writeCounter = useRef(0);
+  /** Whether a read has ever succeeded; until then, the list on screen is not the list. */
+  const everLoaded = useRef(false);
 
   /**
    * Views depend on the local date, which is only knowable in the browser, so
@@ -82,14 +114,24 @@ export default function TaskBoard({
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const timers = settleTimers.current;
+    return () => timers.forEach((timer) => clearTimeout(timer));
+  }, []);
+
   const load = useCallback(
     async (fresh = false) => {
+      const startedAt = Date.now();
       try {
         const loaded = await repo.listTasks({ fresh });
-        setTasks(loaded);
-        setError(null);
+        forgetOldWrites(recentWrites.current, Date.now());
+        // Merged, not replaced: a read that started before a tick, an add or a
+        // delete must not land afterwards and undo it.
+        setTasks(mergeRead(loaded, recentWrites.current, startedAt));
+        everLoaded.current = true;
+        setLoadError(null);
       } catch (e) {
-        setError(describeError(e));
+        setLoadError(describeError(e));
         setTasks((current) => current ?? []);
       }
     },
@@ -100,64 +142,160 @@ export default function TaskBoard({
     void load();
   }, [load]);
 
-  const counts = useMemo(() => (now && tasks ? countTasks(tasks, now) : null), [tasks, now]);
-  const result = useMemo(
-    () => (now && tasks ? buildView(view, tasks, now) : null),
-    [view, tasks, now],
+  // A new repository means a different store or a restored backup: what this
+  // device wrote before no longer describes it. Writes still in flight stay.
+  useEffect(() => {
+    for (const [id, write] of recentWrites.current) {
+      if (!write.pending) recentWrites.current.delete(id);
+    }
+  }, [repo]);
+
+  /** A save went through. If the list never loaded, now is a good time to try again. */
+  const savedOk = useCallback(() => {
+    setWriteError(null);
+    if (!everLoaded.current) void load(true);
+  }, [load]);
+
+  /**
+   * Change one task: show it at once, save it, and on failure put back only
+   * that task — never the whole list as it was, which would wipe anything
+   * else saved meanwhile. Throws on failure when `quiet` (the sort reports it).
+   */
+  const writeTask = useCallback(
+    async (before: Task, patch: TaskPatch, { quiet = false } = {}): Promise<Task> => {
+      const id = before.id;
+      const optimistic: Task = { ...before, ...patch };
+      const mine = ++writeCounter.current;
+      latestWrite.current.set(id, mine);
+      recentWrites.current.set(id, { task: optimistic, at: Date.now(), pending: true });
+      setTasks((current) => replaceTask(current, id, optimistic));
+
+      try {
+        const saved = await repo.updateTask(id, patch);
+        if (latestWrite.current.get(id) === mine) {
+          recentWrites.current.set(id, { task: saved, at: Date.now(), pending: false });
+          setTasks((current) => replaceTask(current, id, saved));
+          savedOk();
+        }
+        return saved;
+      } catch (e) {
+        // A newer change to this task is in flight; it decides what shows.
+        if (latestWrite.current.get(id) === mine) {
+          recentWrites.current.delete(id);
+          setTasks((current) => replaceTask(current, id, before));
+          if (!quiet) setWriteError(`Could not save “${before.title}”: ${describeError(e)}`);
+        }
+        throw e;
+      }
+    },
+    [repo, savedOk],
   );
+
+  const counts = useMemo(() => (now && tasks ? countTasks(tasks, now) : null), [tasks, now]);
+
+  /**
+   * Just-ticked tasks keep their open place for a moment (see `settling`) —
+   * in the open-task views only; the Done view shows them straight away.
+   */
+  const shown = useMemo(
+    () =>
+      tasks && settling.size && view !== 'done'
+        ? tasks.map((t) => (t.status === 'Done' && settling.get(t.id)) || t)
+        : tasks,
+    [tasks, settling, view],
+  );
+  const result = useMemo(
+    () => (now && shown ? buildView(view, shown, now) : null),
+    [view, shown, now],
+  );
+  const byId = useMemo(() => new Map((tasks ?? []).map((t) => [t.id, t])), [tasks]);
 
   const create = useCallback(
     async (text: string): Promise<Task | null> => {
       setCreating(true);
       try {
         const { task, signal } = await repo.captureTask(text);
-        setTasks((current) => [task, ...(current ?? [])]);
+        recentWrites.current.set(task.id, { task, at: Date.now(), pending: false });
+        setTasks((current) => [task, ...(current ?? []).filter((t) => t.id !== task.id)]);
         setLastCapture({ task, signal });
-        setError(null);
+        setSortNote(null);
+        savedOk();
         return task;
       } catch (e) {
-        setError(describeError(e));
+        setWriteError(
+          `Could not save the task: ${describeError(e)} Your text is still in the box — tap Add to try again.`,
+        );
         return null;
       } finally {
         setCreating(false);
       }
     },
-    [repo],
+    [repo, savedOk],
   );
+
+  const settle = useCallback((id: string, before: Task | null) => {
+    const timers = settleTimers.current;
+    clearTimeout(timers.get(id));
+    timers.delete(id);
+    setSettling((current) => {
+      const next = new Map(current);
+      if (before) next.set(id, before);
+      else next.delete(id);
+      return next;
+    });
+    if (before) {
+      timers.set(
+        id,
+        setTimeout(() => {
+          timers.delete(id);
+          setSettling((current) => {
+            const next = new Map(current);
+            next.delete(id);
+            return next;
+          });
+        }, SETTLE_MS),
+      );
+    }
+  }, []);
 
   const toggle = useCallback(
     async (task: Task) => {
-      const next = task.status === 'Done' ? 'Todo' : 'Done';
-      const previous = tasks;
-      // Optimistic: the tick should respond instantly, Notion catches up.
-      setTasks((current) =>
-        (current ?? []).map((t) => (t.id === task.id ? { ...t, status: next } : t)),
-      );
+      // The card may hold an older copy; act on the task as it is now.
+      const live = tasksRef.current?.find((t) => t.id === task.id) ?? task;
+      const next = live.status === 'Done' ? 'Todo' : 'Done';
+      settle(live.id, next === 'Done' ? live : null);
       try {
-        const saved = await repo.updateTask(task.id, { status: next });
-        setTasks((current) => (current ?? []).map((t) => (t.id === task.id ? saved : t)));
-        setError(null);
-      } catch (e) {
-        setTasks(previous);
-        setError(describeError(e));
+        await writeTask(live, { status: next });
+      } catch {
+        settle(live.id, null);
       }
     },
-    [repo, tasks],
+    [settle, writeTask],
   );
 
   const remove = useCallback(
     async (task: Task) => {
-      const previous = tasks;
-      setTasks((current) => (current ?? []).filter((t) => t.id !== task.id));
+      const id = task.id;
+      const index = tasksRef.current?.findIndex((t) => t.id === id) ?? -1;
+      const mine = ++writeCounter.current;
+      latestWrite.current.set(id, mine);
+      recentWrites.current.set(id, { task: null, at: Date.now(), pending: true });
+      setTasks((current) => (current ?? []).filter((t) => t.id !== id));
       try {
-        await repo.archiveTask(task.id);
-        setError(null);
+        await repo.archiveTask(id);
+        if (latestWrite.current.get(id) !== mine) return;
+        recentWrites.current.set(id, { task: null, at: Date.now(), pending: false });
+        // A read may have landed meanwhile; make sure the task stays gone.
+        setTasks((current) => (current ?? []).filter((t) => t.id !== id));
+        savedOk();
       } catch (e) {
-        setTasks(previous);
-        setError(describeError(e));
+        if (latestWrite.current.get(id) !== mine) return;
+        recentWrites.current.delete(id);
+        setTasks((current) => restoreTask(current, task, index));
+        setWriteError(`Could not delete “${task.title}”: ${describeError(e)}`);
       }
     },
-    [repo, tasks],
+    [repo, savedOk],
   );
 
   const inbox = useMemo(() => (tasks ? inboxTasks(tasks) : []), [tasks]);
@@ -182,30 +320,26 @@ export default function TaskBoard({
     if (unseen.length) onCustomCategoriesChange([...customCategories, ...unseen]);
   }, [tasks, customCategories, onCustomCategoriesChange]);
 
+  const editing = editingId ? byId.get(editingId) ?? null : null;
+
   const changeCategory = useCallback(
-    async (task: Task, category: string) => {
-      setEditing(null);
-      if (category === task.category) return;
+    async (id: string, category: string) => {
+      setEditingId(null);
+      const live = tasksRef.current?.find((t) => t.id === id);
+      if (!live || category === live.category) return;
 
       // A brand-new name joins the list straight away, so it is offered next time.
       if (!allCategories.some((c) => c.toLowerCase() === category.toLowerCase())) {
         onCustomCategoriesChange([...customCategories, category]);
       }
 
-      const previous = tasks;
-      setTasks((current) =>
-        (current ?? []).map((t) => (t.id === task.id ? { ...t, category } : t)),
-      );
       try {
-        const saved = await repo.updateTask(task.id, { category });
-        setTasks((current) => (current ?? []).map((t) => (t.id === task.id ? saved : t)));
-        setError(null);
-      } catch (e) {
-        setTasks(previous);
-        setError(describeError(e));
+        await writeTask(live, { category });
+      } catch {
+        // writeTask put the task back and said why.
       }
     },
-    [allCategories, customCategories, onCustomCategoriesChange, repo, tasks],
+    [allCategories, customCategories, onCustomCategoriesChange, writeTask],
   );
 
   const removeCategory = useCallback(
@@ -213,32 +347,55 @@ export default function TaskBoard({
     [customCategories, onCustomCategoriesChange],
   );
 
+  /**
+   * A running sort is cancelled when the board closes (⏻, or leaving for the
+   * first-launch screen) and when the AI settings or the store change: it must
+   * not carry on with a key that was just removed, or a token that was just
+   * forgotten.
+   */
+  const sortAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => sortAbort.current?.abort(), [classify, repo]);
+
   const sortWithAi = useCallback(async () => {
-    if (!classify || !tasks || sorting) return;
+    if (!classify || !tasksRef.current || sortAbort.current) return;
+    const controller = new AbortController();
+    sortAbort.current = controller;
     setSortNote(null);
-    setSorting({ done: 0, total: inboxTasks(tasks).length, changed: 0 });
+    setSorting({ done: 0, total: inboxTasks(tasksRef.current).length, changed: 0 });
 
-    const outcome = await sortInbox(
-      tasks,
-      classify,
-      (task, category) => repo.updateTask(task.id, { category }),
-      {
-        onProgress: setSorting,
-        onUpdated: (saved) =>
-          setTasks((current) => (current ?? []).map((t) => (t.id === saved.id ? saved : t))),
-      },
-    );
+    try {
+      const outcome = await sortInbox(
+        tasksRef.current,
+        classify,
+        (task, category) => writeTask(task, { category }, { quiet: true }),
+        {
+          onProgress: setSorting,
+          current: (id) => tasksRef.current?.find((t) => t.id === id),
+          signal: controller.signal,
+        },
+      );
 
-    setSorting(null);
-    const moved = `Moved ${outcome.changed} of ${outcome.total} out of Inbox.`;
-    setSortNote(
-      outcome.stoppedReason
-        ? `${moved} Stopped early: ${outcome.stoppedReason} Run it again in a minute to continue.`
-        : outcome.changed < outcome.total
-          ? `${moved} Gemini could not place the rest — they are genuinely ambiguous.`
-          : moved,
-    );
-  }, [classify, tasks, sorting, repo]);
+      if (outcome.cancelled) {
+        setSortNote('Sorting stopped because the AI settings changed.');
+        return;
+      }
+      const moved = `Moved ${outcome.changed} of ${outcome.total} out of Inbox.`;
+      const skipped = outcome.skipped
+        ? ` Left ${outcome.skipped} you changed meanwhile as you set ${outcome.skipped === 1 ? 'it' : 'them'}.`
+        : '';
+      const placed = outcome.changed + (outcome.skipped ?? 0);
+      setSortNote(
+        outcome.stoppedReason
+          ? `${moved}${skipped} Stopped early: ${outcome.stoppedReason} Run it again in a minute to continue.`
+          : placed < outcome.total
+            ? `${moved}${skipped} Gemini could not place the rest — they are genuinely ambiguous.`
+            : `${moved}${skipped}`,
+      );
+    } finally {
+      if (sortAbort.current === controller) sortAbort.current = null;
+      setSorting(null);
+    }
+  }, [classify, writeTask]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -248,13 +405,15 @@ export default function TaskBoard({
   }, [load]);
 
   /**
-   * Re-read Notion whenever the user comes back to the app — the moment that
-   * matters on a phone: edit a task in Notion, switch back, and it is already
-   * current. Not a timer: nothing is fetched while the app sits unused, and
-   * bursts of focus events collapse to one request.
+   * Re-read whenever the user comes back to the app — the moment that matters
+   * on a phone: edit a task in Notion, switch back, and it is already current.
+   * Not a timer: nothing is fetched while the app sits unused, and bursts of
+   * focus events collapse to one Notion request.
    *
-   * Skipped while a capture or sort is mid-flight, so a refresh cannot replace
-   * the list underneath an in-progress write.
+   * Phone-only mode re-reads too, and also when another copy of the app (the
+   * installed app and a browser tab share storage) changes the tasks, so a
+   * copy left open never acts on a stale list. Reads merge with this device's
+   * recent writes, so one landing mid-save cannot undo it.
    */
   const busyRef = useRef(false);
   busyRef.current = creating || refreshing || sorting !== null;
@@ -262,22 +421,25 @@ export default function TaskBoard({
   refreshRef.current = refresh;
 
   useEffect(() => {
-    const allow = createThrottle(RETURN_REFRESH_MIN_MS);
+    const allow = createThrottle(isLocal ? 0 : RETURN_REFRESH_MIN_MS);
     allow(); // the initial load counts as the first read
-
-    if (isLocal) return; // nothing outside this device can change local tasks
 
     const onReturn = () => {
       if (document.visibilityState !== 'visible' || busyRef.current) return;
       if (!allow()) return;
       void refreshRef.current();
     };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === TASKS_KEY) void refreshRef.current();
+    };
 
     document.addEventListener('visibilitychange', onReturn);
     window.addEventListener('focus', onReturn);
+    if (isLocal) window.addEventListener('storage', onStorage);
     return () => {
       document.removeEventListener('visibilitychange', onReturn);
       window.removeEventListener('focus', onReturn);
+      window.removeEventListener('storage', onStorage);
     };
   }, [isLocal]);
 
@@ -355,7 +517,7 @@ export default function TaskBoard({
         />
       )}
 
-      {inbox.length > 0 && (aiEnabled || sortNote) && (
+      {(sorting || sortNote || (inbox.length > 0 && aiEnabled)) && (
         <div className="inbox-bar">
           {sorting ? (
             <span>
@@ -368,19 +530,47 @@ export default function TaskBoard({
               {inbox.length} {inbox.length === 1 ? 'task' : 'tasks'} in Inbox
             </span>
           )}
-          {aiEnabled && !sorting && (
+          {aiEnabled && !sorting && inbox.length > 0 && (
             <button type="button" className="icon-button on" onClick={() => void sortWithAi()}>
               ✦ Sort with Gemini
+            </button>
+          )}
+          {sortNote && !sorting && (
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setSortNote(null)}
+              aria-label="Dismiss"
+            >
+              ✕
             </button>
           )}
         </div>
       )}
 
-      {error && (
+      {loadError && (
         <div className="banner" role="alert">
-          <span>{error}</span>
+          <span>
+            {everLoaded.current
+              ? `Could not refresh the list: ${loadError}`
+              : `Could not load your tasks: ${loadError} Tasks you add now are still saved.`}
+          </span>
           <button type="button" className="icon-button" onClick={() => void refresh()}>
             retry
+          </button>
+        </div>
+      )}
+
+      {writeError && (
+        <div className="banner" role="alert">
+          <span>{writeError}</span>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => setWriteError(null)}
+            aria-label="Dismiss"
+          >
+            ✕
           </button>
         </div>
       )}
@@ -406,10 +596,12 @@ export default function TaskBoard({
               {group.tasks.map((task) => (
                 <TaskCard
                   key={task.id}
-                  task={task}
+                  // A settling card shows the real (done) task: struck through,
+                  // and a tap reopens it.
+                  task={settling.has(task.id) ? byId.get(task.id) ?? task : task}
                   now={now}
                   localOnly={isLocal}
-                  onEditCategory={setEditing}
+                  onEditCategory={(t) => setEditingId(t.id)}
                   onToggle={toggle}
                   onDelete={remove}
                 />
@@ -424,9 +616,9 @@ export default function TaskBoard({
           task={editing}
           categories={allCategories}
           usage={usage}
-          onPick={(category) => void changeCategory(editing, category)}
+          onPick={(category) => void changeCategory(editing.id, category)}
           onRemove={removeCategory}
-          onClose={() => setEditing(null)}
+          onClose={() => setEditingId(null)}
         />
       )}
     </>

@@ -38,7 +38,7 @@ test('each Inbox task is reclassified and saved', async () => {
   );
 
   assert.deepEqual(saved, [['בקשה אתית', 'Work'], ['לכתוב ליואל', 'Personal']]);
-  assert.deepEqual(outcome, { done: 2, total: 2, changed: 2 });
+  assert.deepEqual(outcome, { done: 2, total: 2, changed: 2, skipped: 0 });
 });
 
 test('a task Gemini still calls Inbox is left alone, not rewritten', async () => {
@@ -50,7 +50,7 @@ test('a task Gemini still calls Inbox is left alone, not rewritten', async () =>
     { sleep: noSleep },
   );
   assert.equal(writes, 0);
-  assert.deepEqual(outcome, { done: 1, total: 1, changed: 0 });
+  assert.deepEqual(outcome, { done: 1, total: 1, changed: 0, skipped: 0 });
 });
 
 test('the first Gemini failure stops the run and says why', async () => {
@@ -102,5 +102,79 @@ test('an empty Inbox is a no-op', async () => {
     async (t) => t,
     { sleep: noSleep },
   );
-  assert.deepEqual(outcome, { done: 0, total: 0, changed: 0 });
+  assert.deepEqual(outcome, { done: 0, total: 0, changed: 0, skipped: 0 });
+});
+
+test('R1-7: a task moved, completed or deleted during the run is skipped, not overwritten', async () => {
+  const a = task({ title: 'a' });
+  const b = task({ title: 'b' });
+  const c = task({ title: 'c' });
+  const d = task({ title: 'd' });
+  const live = new Map([a, b, c, d].map((t) => [t.id, t]));
+  const saved: string[] = [];
+
+  const outcome = await sortInbox(
+    [a, b, c, d],
+    async (input) => {
+      // While Gemini thinks about "a", the user files "b" by hand, ticks "c"
+      // and deletes "d".
+      if (input.title === 'a') {
+        live.set(b.id, { ...b, category: 'Home' });
+        live.set(c.id, { ...c, status: 'Done' });
+        live.delete(d.id);
+      }
+      return answer('Errands');
+    },
+    async (t, category) => {
+      saved.push(`${t.title}:${category}`);
+      return { ...t, category };
+    },
+    { sleep: noSleep, current: (id) => live.get(id) },
+  );
+
+  assert.deepEqual(saved, ['a:Errands'], 'only the untouched task is written');
+  assert.equal(outcome.stoppedReason, undefined, 'a deleted task does not stop the run');
+  assert.deepEqual(outcome, { done: 4, total: 4, changed: 1, skipped: 3 });
+});
+
+test('R1-7: the user filing a task while Gemini answers it wins', async () => {
+  const a = task({ title: 'a' });
+  const live = new Map([[a.id, a]]);
+  const saved: string[] = [];
+  await sortInbox(
+    [a],
+    async () => {
+      live.set(a.id, { ...a, category: 'Home' });
+      return answer('Errands');
+    },
+    async (t, category) => {
+      saved.push(category);
+      return t;
+    },
+    { sleep: noSleep, current: (id) => live.get(id) },
+  );
+  assert.deepEqual(saved, []);
+});
+
+test('R1-26/R3-4: an aborted run stops before the next request or write', async () => {
+  const controller = new AbortController();
+  const list = [task({ title: 'a' }), task({ title: 'b' }), task({ title: 'c' })];
+  const asked: string[] = [];
+  const saved: string[] = [];
+  const outcome = await sortInbox(
+    list,
+    async (input) => {
+      asked.push(input.title);
+      if (input.title === 'a') controller.abort(); // key removed, board closed, or ⏻
+      return answer('Work');
+    },
+    async (t, category) => {
+      saved.push(t.title);
+      return { ...t, category };
+    },
+    { sleep: noSleep, signal: controller.signal },
+  );
+  assert.deepEqual(asked, ['a']);
+  assert.deepEqual(saved, [], 'not even the answer already in hand is written');
+  assert.equal(outcome.cancelled, true);
 });

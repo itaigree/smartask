@@ -171,41 +171,44 @@ export default function App() {
     );
   }
 
-  if (showAi) {
-    return (
-      <>
-        <Masthead />
-        <AiSettings config={gemini} onChange={setGemini} onClose={() => setShowAi(false)} />
-      </>
-    );
-  }
-
+  // AI settings cover the board rather than replace it: the board stays
+  // mounted, so a half-typed or spoken draft, the chosen view and the notes are
+  // all still there on return. (A running sort is cancelled by the board itself
+  // if the key changes.)
   return (
     <>
-      <TaskBoard
-        repo={repo}
-        storage={
-          mode === 'notion' && config
-            ? { kind: 'notion', token: config.token, databaseId: config.databaseId }
-            : { kind: 'local' }
-        }
-        aiEnabled={Boolean(gemini)}
-        classify={classify}
-        onLeave={leave}
-        onOpenAi={() => setShowAi(true)}
-        customCategories={customCategories}
-        onCustomCategoriesChange={setCustomCategories}
-      />
-      {mode === 'notion' ? (
-        <p className="footer">
-          Every task lives in your own{' '}
-          <a href={config ? notionDatabaseUrl(config.databaseId) : '#'} target="_blank" rel="noreferrer">
-            Notion database ↗
-          </a>
-        </p>
-      ) : (
-        <LocalBackup onRestored={() => setRevision((r) => r + 1)} />
+      {showAi && (
+        <>
+          <Masthead />
+          <AiSettings config={gemini} onChange={setGemini} onClose={() => setShowAi(false)} />
+        </>
       )}
+      <div hidden={showAi}>
+        <TaskBoard
+          repo={repo}
+          storage={
+            mode === 'notion' && config
+              ? { kind: 'notion', token: config.token, databaseId: config.databaseId }
+              : { kind: 'local' }
+          }
+          aiEnabled={Boolean(gemini)}
+          classify={classify}
+          onLeave={leave}
+          onOpenAi={() => setShowAi(true)}
+          customCategories={customCategories}
+          onCustomCategoriesChange={setCustomCategories}
+        />
+        {mode === 'notion' ? (
+          <p className="footer">
+            Every task lives in your own{' '}
+            <a href={config ? notionDatabaseUrl(config.databaseId) : '#'} target="_blank" rel="noreferrer">
+              Notion database ↗
+            </a>
+          </p>
+        ) : (
+          <LocalBackup onRestored={() => setRevision((r) => r + 1)} />
+        )}
+      </div>
     </>
   );
 }

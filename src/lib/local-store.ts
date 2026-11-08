@@ -17,7 +17,7 @@ import {
  * backup and restore below.
  */
 
-const TASKS_KEY = 'smartask.tasks.v1';
+export const TASKS_KEY = 'smartask.tasks.v1';
 const BACKUP_FORMAT = 'smartask-backup';
 
 /** The slice of localStorage this module needs, so tests can pass a fake. */

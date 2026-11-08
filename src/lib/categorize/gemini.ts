@@ -403,24 +403,53 @@ export class GeminiError extends Error {
   }
 }
 
-async function call(path: string, apiKey: string, init?: RequestInit): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_ROOT}${path}`, {
-      ...init,
-      headers: {
-        'x-goog-api-key': apiKey,
-        ...(init?.body ? { 'content-type': 'application/json' } : {}),
-        ...(init?.headers ?? {}),
-      },
-    });
-  } catch {
-    throw new GeminiError('Could not reach Gemini. Check your connection.');
-  }
+/**
+ * How long one Gemini request may take, reply included. A connection that dies
+ * silently would otherwise leave capture on "Saving…" for ever; past this, the
+ * keyword rules file the task and the note says why.
+ */
+export const GEMINI_TIMEOUT_MS = 15_000;
 
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new GeminiError(describeGeminiError(body, response.status));
-  return body;
+const TOO_SLOW = 'Gemini took too long to answer, so it was skipped this time.';
+
+const isTimeout = (error: unknown) =>
+  error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+
+async function call(path: string, apiKey: string, init?: RequestInit): Promise<unknown> {
+  // One time limit for the request and its reply, so a body that never
+  // finishes is a timeout too.
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('Gemini timed out', 'TimeoutError')),
+    GEMINI_TIMEOUT_MS,
+  );
+
+  try {
+    let response: Response;
+    try {
+      response = await fetch(`${API_ROOT}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          'x-goog-api-key': apiKey,
+          ...(init?.body ? { 'content-type': 'application/json' } : {}),
+          ...(init?.headers ?? {}),
+        },
+      });
+    } catch (error) {
+      if (isTimeout(error) || controller.signal.aborted) throw new GeminiError(TOO_SLOW);
+      throw new GeminiError('Could not reach Gemini. Check your connection.');
+    }
+
+    const body = await response.json().catch(() => {
+      if (controller.signal.aborted) throw new GeminiError(TOO_SLOW);
+      return null;
+    });
+    if (!response.ok) throw new GeminiError(describeGeminiError(body, response.status));
+    return body;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

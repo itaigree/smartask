@@ -122,6 +122,36 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-08 — Bug-hunt chunk 2: board timing and saving.**
+
+Most of these came from one cause: the board kept a single copy of the list,
+and any read or failed save overwrote it wholesale. Now every write is
+remembered (`board-sync.ts`): pending ones until they finish, finished ones for
+25 s, and each read is merged with them instead of replacing the list.
+
+- A read in flight no longer undoes a newer add, tick or delete (R1-5); the
+  cache no longer stores a read that a write overtook (`cache.ts` epoch).
+- A failed save reverts only its own task (R1-6); an older answer arriving
+  after a newer save to the same task is ignored (R3-6).
+- Sort with Gemini re-checks each task against the live list and skips one you
+  moved, completed or deleted meanwhile (R1-7); it is cancelled when the board
+  closes (⏻) or the AI settings or store change (R1-26, R3-4); its result stays
+  visible until dismissed or the next capture (R1-52).
+- A ticked task stays in place, struck through, for 2 s — a second tap reopens
+  it instead of completing the next card (R1-16).
+- The capture box keeps text typed while saving (R1-8), is read-only while the
+  mic listens (R1-28), and keeps the text of a task being saved on the device
+  until it is confirmed, restoring it if the app closed mid-save (R3-1).
+- Gemini requests time out after 15 s and fall back to the rules with a note
+  (R1-12).
+- AI settings cover the board instead of replacing it, so drafts and the view
+  survive (R1-26).
+- Load and save errors are separate: a load error stays until a read succeeds
+  and a successful save re-reads an unloaded list (R1-50); a save error names
+  the task and offers dismiss, not a "retry" that only re-read (R1-51).
+- Phone-only mode re-reads on return and when another open copy changes the
+  tasks (R1-15); the category sheet works on the live task by id (R3-5).
+
 **2026-11-08 — Bug-hunt chunk 1 fixed; Gemini can create categories.**
 
 From `docs/bug-hunt-2026-11-06.md`, the parser, date and Notion-id group:

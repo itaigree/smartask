@@ -12,6 +12,30 @@ import { CategoryChip, DueChip, PriorityChip, ProjectChip, TagChip } from './Chi
 import VoiceButton, { type VoiceControl } from './VoiceButton.tsx';
 
 /**
+ * The text of a task that is being saved, kept on the device until the save is
+ * confirmed. If the app is closed mid-save — back gesture, the tab discarded —
+ * the text comes back in the box next time instead of being lost.
+ */
+const PENDING_KEY = 'smartask.pending.v1';
+
+function loadPending(): string | null {
+  try {
+    return window.localStorage.getItem(PENDING_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function savePending(text: string | null): void {
+  try {
+    if (text) window.localStorage.setItem(PENDING_KEY, text);
+    else window.localStorage.removeItem(PENDING_KEY);
+  } catch {
+    // Storage blocked: the save itself still works, only this safety net is lost.
+  }
+}
+
+/**
  * The capture box. It parses as you type, so you can see what the app
  * understood before committing — the same pure parser the server uses.
  */
@@ -37,6 +61,15 @@ export default function QuickAdd({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [speechLang, setSpeechLang] = useState<SpeechLang>('en-US');
   useEffect(() => setSpeechLang(loadSpeechLang()), []);
+
+  /** A task that was still saving when the app last closed, put back in the box. */
+  const [restored, setRestored] = useState(false);
+  useEffect(() => {
+    const pending = loadPending();
+    if (!pending) return;
+    setText((current) => current || pending);
+    setRestored(true);
+  }, []);
 
   function switchSpeechLang() {
     const next: SpeechLang = speechLang === 'he-IL' ? 'en-US' : 'he-IL';
@@ -69,9 +102,14 @@ export default function QuickAdd({
   async function add(raw: string): Promise<boolean> {
     const trimmed = raw.trim();
     if (!trimmed || busy) return false;
+    savePending(trimmed);
+    setRestored(false);
     const created = await onCreate(trimmed);
     if (created) {
-      setText('');
+      savePending(null);
+      // Empty the box only if it still holds what was saved: anything typed
+      // while "Saving…" showed — the next task, a correction — stays.
+      setText((current) => (current.trim() === trimmed ? '' : current));
       setHeard(false);
       setVoiceError(null);
     }
@@ -106,7 +144,12 @@ export default function QuickAdd({
           onChange={(e) => {
             setText(e.target.value);
             setHeard(false);
+            setRestored(false);
+            if (!e.target.value.trim()) savePending(null); // cleared on purpose
           }}
+          // While the mic listens, speech owns the box: typing then would be
+          // overwritten by the next speech update. Tap the mic to stop first.
+          readOnly={listening}
           placeholder={
             // One short example in the language the user speaks: two did not
             // fit a phone-width box.
@@ -141,6 +184,13 @@ export default function QuickAdd({
       {listening && (
         <p className="listening-hint" aria-live="polite">
           Listening… stop talking when you are done, or tap the mic.
+        </p>
+      )}
+
+      {restored && text.trim() && (
+        <p className="heard-hint" aria-live="polite">
+          This task was still saving when the app closed. Check it is not already in your list,
+          then tap Add.
         </p>
       )}
 
