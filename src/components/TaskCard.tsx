@@ -43,8 +43,9 @@ export default function TaskCard({
         className="check"
         aria-pressed={done}
         aria-label={done ? `Reopen ${task.title}` : `Complete ${task.title}`}
-        disabled={busy}
-        onClick={() => run(() => onToggle(task))}
+        // Never disabled while saving: saves to one task are queued in order,
+        // and a second tap is how a just-ticked task is reopened.
+        onClick={() => void onToggle(task)}
       >
         ✓
       </button>

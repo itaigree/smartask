@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mergeRead, forgetOldWrites, replaceTask, restoreTask, READ_GRACE_MS, FORGET_AFTER_MS,
+  mergeRead, forgetOldWrites, replaceTask, restoreTask, ledgerTask, READ_GRACE_MS, FORGET_AFTER_MS,
   type RecentWrite,
 } from '../src/lib/board-sync.ts';
 import { cached, invalidate } from '../src/lib/cache.ts';
@@ -82,4 +82,36 @@ test('R1-5: a read in flight during a write is not cached afterwards', async () 
   assert.equal(await cached('k', 20_000, async () => { reads += 1; return 2; }), 2,
     'but the next read goes to the store');
   assert.equal(reads, 2);
+});
+
+test('device storage (grace 0): a read that started after a write shows changes made elsewhere', () => {
+  const a = task({ title: 'a', category: 'Inbox' });
+  const writes = new Map<string, RecentWrite>([
+    [a.id, { task: a, at: T0 - 1, pending: false }], // written here just before the read
+  ]);
+  const movedInOtherCopy = { ...a, category: 'Home' };
+  assert.equal(mergeRead([movedInOtherCopy], writes, T0, 0)[0].category, 'Home');
+  assert.deepEqual(mergeRead([], writes, T0, 0), [], 'deleted in the other copy: not brought back');
+  // ...but a read that started before the write still cannot undo it.
+  const later = new Map<string, RecentWrite>([[a.id, { task: movedInOtherCopy, at: T0 + 1, pending: false }]]);
+  assert.equal(mergeRead([a], later, T0, 0)[0].category, 'Home');
+});
+
+test('a ledger shows the confirmed task with every queued change applied', () => {
+  const a = task({ title: 'a', category: 'Inbox', status: 'Todo' });
+  const ledger = {
+    confirmed: a,
+    confirmedAt: T0,
+    pending: [{ seq: 1, patch: { category: 'Home' } }, { seq: 2, patch: { status: 'Done' as const } }],
+    tail: Promise.resolve(),
+    index: 0,
+  };
+  const shown = ledgerTask(ledger);
+  assert.equal(shown?.category, 'Home');
+  assert.equal(shown?.status, 'Done');
+  // The first change fails: only it is dropped, the second still shows.
+  ledger.pending = ledger.pending.slice(1);
+  assert.equal(ledgerTask(ledger)?.category, 'Inbox');
+  assert.equal(ledgerTask(ledger)?.status, 'Done');
+  assert.equal(ledgerTask({ ...ledger, pending: [{ seq: 3, patch: null }] }), null, 'a queued delete');
 });

@@ -151,6 +151,21 @@ remembered (`board-sync.ts`): pending ones until they finish, finished ones for
   the task and offers dismiss, not a "retry" that only re-read (R1-51).
 - Phone-only mode re-reads on return and when another open copy changes the
   tasks (R1-15); the category sheet works on the live task by id (R3-5).
+- Review (two adversarial reviewers, ~20 scripted scenarios in the built app)
+  found 15 issues, fixed: saves to one task are now queued (`Ledger`), so
+  answers arrive in order and a failure reverts to the last confirmed state
+  plus queued changes and is always reported; a failed save no longer forgets
+  the task's earlier write; the merge window is 0 for device storage and 5 s
+  for Notion (was 25 s, which hid changes made elsewhere); reads are numbered
+  so an older one never replaces a newer one; the board is reset only for a
+  new store or a restored backup, not an AI-settings change; reopening in the
+  Done view settles too; settled cards move only after 2 s without a tap, and
+  a ✓/✕ tap within 400 ms of that shift is ignored; ✓ is never disabled, so the
+  undo tap works while saving; the box is read-only while saving (so a failed
+  save leaves the text right there) and a draft restored in one copy clears
+  when another copy finishes saving it; the Gemini timeout text is neutral.
+  Accepted: a change made in Notion within 5 s of the app's own save to that
+  task can be masked until the next refresh.
 
 **2026-11-08 — Bug-hunt chunk 1 fixed; Gemini can create categories.**
 

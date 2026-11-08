@@ -13,7 +13,8 @@ import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
 import type { Task, TaskPatch } from '../lib/types.ts';
 import {
-  forgetOldWrites, mergeRead, replaceTask, restoreTask, type RecentWrite,
+  forgetOldWrites, ledgerTask, mergeRead, replaceTask, restoreTask,
+  type Ledger, type RecentWrite,
 } from '../lib/board-sync.ts';
 import { buildView, countTasks, daysUntilDue, type ViewId } from '../lib/views.ts';
 import { dueLabel } from './Chips.tsx';
@@ -24,8 +25,21 @@ import ViewTabs from './ViewTabs.tsx';
 /** Coming back to the app re-reads Notion, but no more often than this. */
 const RETURN_REFRESH_MIN_MS = 10_000;
 
-/** How long a just-ticked task stays in place, struck through, before it leaves the list. */
+/**
+ * How long after the last tap a just-ticked task stays in place, struck
+ * through, before it moves. Every tap on the list restarts it.
+ */
 const SETTLE_MS = 2_000;
+
+/**
+ * When settled cards finally move, the list shifts. A ✓ or ✕ tap landing this
+ * soon after was aimed at the old layout, so it is ignored rather than allowed
+ * to hit whatever card slid under the finger.
+ */
+const SHIFT_GUARD_MS = 400;
+
+/** See `graceMs` below: how far Notion's query may lag behind a confirmed write. */
+const NOTION_READ_GRACE_MS = 5_000;
 
 /**
  * Holds the task list client-side so an edit feels instant, and writes straight
@@ -67,8 +81,12 @@ export default function TaskBoard({
   const [view, setView] = useState<ViewId>('focus');
   /** Reading the list failed. Stays until a read succeeds; "retry" re-reads. */
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** A save failed. Says which; dismissed by hand or cleared by the next save. */
-  const [writeError, setWriteError] = useState<string | null>(null);
+  /**
+   * A save failed, and which. Stays until dismissed — a later save that works
+   * says nothing about the one that did not — except that a failed add clears
+   * once an add goes through.
+   */
+  const [writeError, setWriteError] = useState<{ text: string; add: boolean } | null>(null);
   const [creating, setCreating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   /** What happened to the last capture — who filed it, and why if it fell back. */
@@ -84,12 +102,19 @@ export default function TaskBoard({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sortNote, setSortNote] = useState<string | null>(null);
   /**
-   * Tasks just ticked done, shown in place (struck through) for a moment
-   * instead of vanishing: otherwise the next card slides under the finger and a
-   * double tap completes it too. A second tap on the struck card reopens it.
+   * Tasks just ticked (or reopened), kept where they were for a moment instead
+   * of jumping to their new place: otherwise the next card slides under the
+   * finger and a double tap completes it too. The card shows its new state
+   * (struck through); a second tap on it undoes the first. They all leave
+   * together once the user has stopped tapping for a moment, so the list never
+   * shifts under a finger that is about to tap.
    */
-  const [settling, setSettling] = useState<ReadonlyMap<string, Task>>(new Map());
-  const settleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [settling, setSettling] = useState<ReadonlyMap<string, { copy: Task; view: ViewId }>>(
+    new Map(),
+  );
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   /** The latest list, for callbacks that run after a wait (a sort, a save). */
   const tasksRef = useRef<Task[] | null>(null);
@@ -97,11 +122,21 @@ export default function TaskBoard({
 
   /** This device's recent writes, merged into every read (see board-sync.ts). */
   const recentWrites = useRef(new Map<string, RecentWrite>());
-  /** The newest write per task, so an older answer arriving late is ignored. */
-  const latestWrite = useRef(new Map<string, number>());
+  /** Per-task save queues (see `Ledger`). */
+  const ledgers = useRef(new Map<string, Ledger>());
   const writeCounter = useRef(0);
   /** Whether a read has ever succeeded; until then, the list on screen is not the list. */
   const everLoaded = useRef(false);
+  /** Reads are numbered so an older one landing late never replaces a newer one. */
+  const readCounter = useRef(0);
+  const appliedRead = useRef(0);
+  /**
+   * How long a finished write outranks a read that started after it. Notion's
+   * query can lag a moment behind a write it has confirmed; device storage
+   * never does, so there a newer read always wins — it may hold a change made
+   * in another open copy of the app.
+   */
+  const graceMs = isLocal ? 0 : NOTION_READ_GRACE_MS;
 
   /**
    * Views depend on the local date, which is only knowable in the browser, so
@@ -114,96 +149,129 @@ export default function TaskBoard({
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    const timers = settleTimers.current;
-    return () => timers.forEach((timer) => clearTimeout(timer));
+  useEffect(() => () => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
   }, []);
 
   const load = useCallback(
     async (fresh = false) => {
+      const mine = ++readCounter.current;
       const startedAt = Date.now();
       try {
         const loaded = await repo.listTasks({ fresh });
+        if (mine < appliedRead.current) return; // a newer read already landed
+        appliedRead.current = mine;
         forgetOldWrites(recentWrites.current, Date.now());
         // Merged, not replaced: a read that started before a tick, an add or a
         // delete must not land afterwards and undo it.
-        setTasks(mergeRead(loaded, recentWrites.current, startedAt));
+        setTasks(mergeRead(loaded, recentWrites.current, startedAt, graceMs));
         everLoaded.current = true;
         setLoadError(null);
       } catch (e) {
+        if (mine < appliedRead.current) return;
         setLoadError(describeError(e));
         setTasks((current) => current ?? []);
       }
     },
-    [repo],
+    [repo, graceMs],
   );
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // A new repository means a different store or a restored backup: what this
-  // device wrote before no longer describes it. Writes still in flight stay.
-  useEffect(() => {
-    for (const [id, write] of recentWrites.current) {
-      if (!write.pending) recentWrites.current.delete(id);
-    }
-  }, [repo]);
-
   /** A save went through. If the list never loaded, now is a good time to try again. */
   const savedOk = useCallback(() => {
-    setWriteError(null);
     if (!everLoaded.current) void load(true);
   }, [load]);
 
-  /**
-   * Change one task: show it at once, save it, and on failure put back only
-   * that task — never the whole list as it was, which would wipe anything
-   * else saved meanwhile. Throws on failure when `quiet` (the sort reports it).
-   */
-  const writeTask = useCallback(
-    async (before: Task, patch: TaskPatch, { quiet = false } = {}): Promise<Task> => {
-      const id = before.id;
-      const optimistic: Task = { ...before, ...patch };
-      const mine = ++writeCounter.current;
-      latestWrite.current.set(id, mine);
-      recentWrites.current.set(id, { task: optimistic, at: Date.now(), pending: true });
-      setTasks((current) => replaceTask(current, id, optimistic));
+  /** Show what a task's ledger says, and record it for merging into reads. */
+  const publish = useCallback((id: string) => {
+    const ledger = ledgers.current.get(id);
+    if (!ledger) return;
+    const shownTask = ledgerTask(ledger);
+    recentWrites.current.set(
+      id,
+      ledger.pending.length
+        ? { task: shownTask, at: Date.now(), pending: true }
+        : { task: ledger.confirmed, at: ledger.confirmedAt, pending: false },
+    );
+    setTasks((current) =>
+      shownTask
+        ? restoreTask(replaceTask(current, id, shownTask), shownTask, ledger.index)
+        : (current ?? []).filter((t) => t.id !== id),
+    );
+  }, []);
 
-      try {
-        const saved = await repo.updateTask(id, patch);
-        if (latestWrite.current.get(id) === mine) {
-          recentWrites.current.set(id, { task: saved, at: Date.now(), pending: false });
-          setTasks((current) => replaceTask(current, id, saved));
-          savedOk();
-        }
-        return saved;
-      } catch (e) {
-        // A newer change to this task is in flight; it decides what shows.
-        if (latestWrite.current.get(id) === mine) {
-          recentWrites.current.delete(id);
-          setTasks((current) => replaceTask(current, id, before));
-          if (!quiet) setWriteError(`Could not save “${before.title}”: ${describeError(e)}`);
-        }
-        throw e;
+  /**
+   * Change or delete one task. It shows at once; the save waits for any
+   * earlier save to the same task, so answers come back in the order they were
+   * sent and the last one is the task's real state. On failure, only this
+   * change is undone — the task goes back to what the store last confirmed,
+   * plus any changes still queued — and the user is told which change failed.
+   * Never touches other tasks, and throws so a caller (the sort) can stop.
+   */
+  const writeOp = useCallback(
+    (task: Task, patch: TaskPatch | null, failure: string, { quiet = false } = {}) => {
+      const id = task.id;
+      let ledger = ledgers.current.get(id);
+      if (!ledger || ledger.pending.length === 0) {
+        // Nothing in flight: start from the task as it is on screen now.
+        ledger = {
+          confirmed: task,
+          confirmedAt: ledger?.confirmedAt ?? 0,
+          pending: [],
+          tail: ledger?.tail ?? Promise.resolve(),
+          index: ledger?.index ?? 0,
+        };
+        ledgers.current.set(id, ledger);
       }
+      const at = tasksRef.current?.findIndex((t) => t.id === id) ?? -1;
+      if (at >= 0) ledger.index = at;
+      const op = { seq: ++writeCounter.current, patch };
+      ledger.pending.push(op);
+      publish(id);
+
+      const entry = ledger;
+      const run = entry.tail.then(async () => {
+        try {
+          if (patch === null) {
+            await repo.archiveTask(id);
+            entry.confirmed = null;
+          } else {
+            entry.confirmed = await repo.updateTask(id, patch);
+          }
+          entry.confirmedAt = Date.now();
+          entry.pending = entry.pending.filter((p) => p !== op);
+          publish(id);
+          savedOk();
+          return entry.confirmed;
+        } catch (e) {
+          entry.pending = entry.pending.filter((p) => p !== op);
+          publish(id);
+          if (!quiet) setWriteError({ text: `${failure}: ${describeError(e)}`, add: false });
+          throw e;
+        }
+      });
+      entry.tail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
-    [repo, savedOk],
+    [repo, publish, savedOk],
   );
 
   const counts = useMemo(() => (now && tasks ? countTasks(tasks, now) : null), [tasks, now]);
 
-  /**
-   * Just-ticked tasks keep their open place for a moment (see `settling`) —
-   * in the open-task views only; the Done view shows them straight away.
-   */
-  const shown = useMemo(
-    () =>
-      tasks && settling.size && view !== 'done'
-        ? tasks.map((t) => (t.status === 'Done' && settling.get(t.id)) || t)
-        : tasks,
-    [tasks, settling, view],
-  );
+  /** Settling tasks keep their old place in the view they were tapped in. */
+  const shown = useMemo(() => {
+    if (!tasks || settling.size === 0) return tasks;
+    return tasks.map((t) => {
+      const held = settling.get(t.id);
+      return held && held.view === view ? held.copy : t;
+    });
+  }, [tasks, settling, view]);
   const result = useMemo(
     () => (now && shown ? buildView(view, shown, now) : null),
     [view, shown, now],
@@ -215,87 +283,82 @@ export default function TaskBoard({
       setCreating(true);
       try {
         const { task, signal } = await repo.captureTask(text);
-        recentWrites.current.set(task.id, { task, at: Date.now(), pending: false });
-        setTasks((current) => [task, ...(current ?? []).filter((t) => t.id !== task.id)]);
+        ledgers.current.set(task.id, {
+          confirmed: task,
+          confirmedAt: Date.now(),
+          pending: [],
+          tail: Promise.resolve(),
+          index: 0,
+        });
+        publish(task.id);
         setLastCapture({ task, signal });
         setSortNote(null);
+        setWriteError((current) => (current?.add ? null : current));
         savedOk();
         return task;
       } catch (e) {
-        setWriteError(
-          `Could not save the task: ${describeError(e)} Your text is still in the box — tap Add to try again.`,
-        );
+        setWriteError({
+          text: `Could not save the task: ${describeError(e)} Your text is still in the box — tap Add to try again.`,
+          add: true,
+        });
         return null;
       } finally {
         setCreating(false);
       }
     },
-    [repo, savedOk],
+    [repo, publish, savedOk],
   );
 
-  const settle = useCallback((id: string, before: Task | null) => {
-    const timers = settleTimers.current;
-    clearTimeout(timers.get(id));
-    timers.delete(id);
-    setSettling((current) => {
-      const next = new Map(current);
-      if (before) next.set(id, before);
-      else next.delete(id);
-      return next;
-    });
-    if (before) {
-      timers.set(
-        id,
-        setTimeout(() => {
-          timers.delete(id);
-          setSettling((current) => {
-            const next = new Map(current);
-            next.delete(id);
-            return next;
-          });
-        }, SETTLE_MS),
-      );
-    }
+  /** (Re)start the quiet period after which settling cards move to their new place. */
+  const shiftedAt = useRef(0);
+  const holdSettling = useCallback(() => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = null;
+      shiftedAt.current = Date.now();
+      setSettling(new Map());
+    }, SETTLE_MS);
   }, []);
+  /** Was the list just rearranged under the user's finger? */
+  const justShifted = () => Date.now() - shiftedAt.current < SHIFT_GUARD_MS;
+  const settlingRef = useRef(settling);
+  settlingRef.current = settling;
 
   const toggle = useCallback(
     async (task: Task) => {
+      if (justShifted()) return;
       // The card may hold an older copy; act on the task as it is now.
       const live = tasksRef.current?.find((t) => t.id === task.id) ?? task;
       const next = live.status === 'Done' ? 'Todo' : 'Done';
-      settle(live.id, next === 'Done' ? live : null);
+      const undo = settlingRef.current.has(live.id);
+      setSettling((current) => {
+        const copy = new Map(current);
+        // A second tap undoes the first: the card is back where it belongs.
+        if (undo) copy.delete(live.id);
+        else copy.set(live.id, { copy: live, view: viewRef.current });
+        return copy;
+      });
+      holdSettling();
+      const verb = next === 'Done' ? 'complete' : 'reopen';
       try {
-        await writeTask(live, { status: next });
+        await writeOp(live, { status: next }, `Could not ${verb} “${live.title}”`);
       } catch {
-        settle(live.id, null);
+        // writeOp put the task back and said why.
       }
     },
-    [settle, writeTask],
+    [holdSettling, writeOp],
   );
 
   const remove = useCallback(
     async (task: Task) => {
-      const id = task.id;
-      const index = tasksRef.current?.findIndex((t) => t.id === id) ?? -1;
-      const mine = ++writeCounter.current;
-      latestWrite.current.set(id, mine);
-      recentWrites.current.set(id, { task: null, at: Date.now(), pending: true });
-      setTasks((current) => (current ?? []).filter((t) => t.id !== id));
+      if (justShifted()) return;
       try {
-        await repo.archiveTask(id);
-        if (latestWrite.current.get(id) !== mine) return;
-        recentWrites.current.set(id, { task: null, at: Date.now(), pending: false });
-        // A read may have landed meanwhile; make sure the task stays gone.
-        setTasks((current) => (current ?? []).filter((t) => t.id !== id));
-        savedOk();
-      } catch (e) {
-        if (latestWrite.current.get(id) !== mine) return;
-        recentWrites.current.delete(id);
-        setTasks((current) => restoreTask(current, task, index));
-        setWriteError(`Could not delete “${task.title}”: ${describeError(e)}`);
+        await writeOp(task, null, `Could not delete “${task.title}”`);
+      } catch {
+        // writeOp put the task back and said why.
       }
     },
-    [repo, savedOk],
+    [writeOp],
   );
 
   const inbox = useMemo(() => (tasks ? inboxTasks(tasks) : []), [tasks]);
@@ -334,12 +397,12 @@ export default function TaskBoard({
       }
 
       try {
-        await writeTask(live, { category });
+        await writeOp(live, { category }, `Could not move “${live.title}” to ${category}`);
       } catch {
-        // writeTask put the task back and said why.
+        // writeOp put the task back and said why.
       }
     },
-    [allCategories, customCategories, onCustomCategoriesChange, writeTask],
+    [allCategories, customCategories, onCustomCategoriesChange, writeOp],
   );
 
   const removeCategory = useCallback(
@@ -367,7 +430,11 @@ export default function TaskBoard({
       const outcome = await sortInbox(
         tasksRef.current,
         classify,
-        (task, category) => writeTask(task, { category }, { quiet: true }),
+        async (task, category) => {
+          const saved = await writeOp(task, { category }, 'Sort', { quiet: true });
+          if (!saved) throw new Error('That task no longer exists.');
+          return saved;
+        },
         {
           onProgress: setSorting,
           current: (id) => tasksRef.current?.find((t) => t.id === id),
@@ -395,7 +462,7 @@ export default function TaskBoard({
       if (sortAbort.current === controller) sortAbort.current = null;
       setSorting(null);
     }
-  }, [classify, writeTask]);
+  }, [classify, writeOp]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -563,7 +630,7 @@ export default function TaskBoard({
 
       {writeError && (
         <div className="banner" role="alert">
-          <span>{writeError}</span>
+          <span>{writeError.text}</span>
           <button
             type="button"
             className="ghost-button"
@@ -586,29 +653,33 @@ export default function TaskBoard({
       ) : result.groups.length === 0 ? (
         <p className="empty">{result.emptyMessage}</p>
       ) : (
-        result.groups.map((group) => (
-          <section className="group" key={group.key}>
-            <div className={`group-head${group.key === 'overdue' ? ' overdue' : ''}`}>
-              <h2 className="group-title">{group.label}</h2>
-              <span className="group-count">{group.tasks.length}</span>
-            </div>
-            <div className="cards">
-              {group.tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  // A settling card shows the real (done) task: struck through,
-                  // and a tap reopens it.
-                  task={settling.has(task.id) ? byId.get(task.id) ?? task : task}
-                  now={now}
-                  localOnly={isLocal}
-                  onEditCategory={(t) => setEditingId(t.id)}
-                  onToggle={toggle}
-                  onDelete={remove}
-                />
-              ))}
-            </div>
-          </section>
-        ))
+        // Any touch on the list while cards are settling restarts their wait,
+        // so the list never shifts under a finger that is about to tap.
+        <div onPointerDownCapture={() => settlingRef.current.size > 0 && holdSettling()}>
+          {result.groups.map((group) => (
+            <section className="group" key={group.key}>
+              <div className={`group-head${group.key === 'overdue' ? ' overdue' : ''}`}>
+                <h2 className="group-title">{group.label}</h2>
+                <span className="group-count">{group.tasks.length}</span>
+              </div>
+              <div className="cards">
+                {group.tasks.map((task) => (
+                  <TaskCard
+                    key={task.id}
+                    // A settling card shows the real (done) task: struck through,
+                    // and a tap reopens it.
+                    task={settling.has(task.id) ? byId.get(task.id) ?? task : task}
+                    now={now}
+                    localOnly={isLocal}
+                    onEditCategory={(t) => setEditingId(t.id)}
+                    onToggle={toggle}
+                    onDelete={remove}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
 
       {editing && (

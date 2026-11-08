@@ -410,7 +410,7 @@ export class GeminiError extends Error {
  */
 export const GEMINI_TIMEOUT_MS = 15_000;
 
-const TOO_SLOW = 'Gemini took too long to answer, so it was skipped this time.';
+const TOO_SLOW = 'Gemini took too long to answer.';
 
 const isTimeout = (error: unknown) =>
   error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');

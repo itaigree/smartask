@@ -185,6 +185,9 @@ export default function App() {
       )}
       <div hidden={showAi}>
         <TaskBoard
+          // A different store, or a restored backup, is a fresh board; changing
+          // the AI settings is not — the board and its pending saves carry on.
+          key={`${mode}:${mode === 'notion' ? config?.databaseId : 'device'}:${revision}`}
           repo={repo}
           storage={
             mode === 'notion' && config

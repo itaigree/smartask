@@ -18,9 +18,13 @@ import VoiceButton, { type VoiceControl } from './VoiceButton.tsx';
  */
 const PENDING_KEY = 'smartask.pending.v1';
 
+/** The text to put back in the box, if the app closed while saving it. */
 function loadPending(): string | null {
   try {
-    return window.localStorage.getItem(PENDING_KEY);
+    const raw = window.localStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const entry = JSON.parse(raw) as { text?: unknown };
+    return typeof entry.text === 'string' && entry.text ? entry.text : null;
   } catch {
     return null;
   }
@@ -28,8 +32,14 @@ function loadPending(): string | null {
 
 function savePending(text: string | null): void {
   try {
-    if (text) window.localStorage.setItem(PENDING_KEY, text);
-    else window.localStorage.removeItem(PENDING_KEY);
+    if (text) {
+      window.localStorage.setItem(
+        PENDING_KEY,
+        JSON.stringify({ text, at: Date.now() }),
+      );
+    } else {
+      window.localStorage.removeItem(PENDING_KEY);
+    }
   } catch {
     // Storage blocked: the save itself still works, only this safety net is lost.
   }
@@ -63,13 +73,28 @@ export default function QuickAdd({
   useEffect(() => setSpeechLang(loadSpeechLang()), []);
 
   /** A task that was still saving when the app last closed, put back in the box. */
-  const [restored, setRestored] = useState(false);
+  const [restored, setRestored] = useState<string | null>(null);
   useEffect(() => {
     const pending = loadPending();
     if (!pending) return;
     setText((current) => current || pending);
-    setRestored(true);
+    setRestored(pending);
   }, []);
+
+  // The text may belong to another open copy of the app (the installed app and
+  // a browser tab share storage) that was still saving it. When that copy
+  // finishes, it clears the entry: take the text back out of this box too, so
+  // it is not added twice.
+  useEffect(() => {
+    if (!restored) return;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== PENDING_KEY || event.newValue !== null) return;
+      setText((current) => (current.trim() === restored.trim() ? '' : current));
+      setRestored(null);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [restored]);
 
   function switchSpeechLang() {
     const next: SpeechLang = speechLang === 'he-IL' ? 'en-US' : 'he-IL';
@@ -103,12 +128,10 @@ export default function QuickAdd({
     const trimmed = raw.trim();
     if (!trimmed || busy) return false;
     savePending(trimmed);
-    setRestored(false);
+    setRestored(null);
     const created = await onCreate(trimmed);
     if (created) {
       savePending(null);
-      // Empty the box only if it still holds what was saved: anything typed
-      // while "Saving…" showed — the next task, a correction — stays.
       setText((current) => (current.trim() === trimmed ? '' : current));
       setHeard(false);
       setVoiceError(null);
@@ -144,12 +167,14 @@ export default function QuickAdd({
           onChange={(e) => {
             setText(e.target.value);
             setHeard(false);
-            setRestored(false);
+            setRestored(null);
             if (!e.target.value.trim()) savePending(null); // cleared on purpose
           }}
           // While the mic listens, speech owns the box: typing then would be
-          // overwritten by the next speech update. Tap the mic to stop first.
-          readOnly={listening}
+          // overwritten by the next speech update. While saving, the box holds
+          // the task being saved — so a failed save leaves it right there, and
+          // nothing typed meanwhile can be wiped or mixed up with it.
+          readOnly={listening || busy}
           placeholder={
             // One short example in the language the user speaks: two did not
             // fit a phone-width box.

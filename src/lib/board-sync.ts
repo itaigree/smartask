@@ -25,11 +25,12 @@ export interface RecentWrite {
 }
 
 /**
- * How long a finished write outranks what a read says. A read may come from
- * the 20-second cache or from a query that has not caught up yet, so this is a
- * little longer than the cache.
+ * Default for how long a finished write outranks a read that started after it
+ * (a query that has not caught up yet). Callers pick their own: 0 for device
+ * storage, which never lags, and a few seconds for Notion. A read that started
+ * *before* the write finished never wins, whatever the grace.
  */
-export const READ_GRACE_MS = 25_000;
+export const READ_GRACE_MS = 5_000;
 
 /** Finished writes older than this are forgotten. */
 export const FORGET_AFTER_MS = 60_000;
@@ -46,8 +47,9 @@ export function mergeRead(
   loaded: readonly Task[],
   writes: ReadonlyMap<string, RecentWrite>,
   readStartedAt: number,
+  graceMs: number = READ_GRACE_MS,
 ): Task[] {
-  const cutoff = readStartedAt - READ_GRACE_MS;
+  const cutoff = readStartedAt - graceMs;
   const relevant = new Map<string, RecentWrite>();
   for (const [id, write] of writes) {
     if (write.pending || write.at > cutoff) relevant.set(id, write);
@@ -91,4 +93,31 @@ export function restoreTask(list: readonly Task[] | null, task: Task, index: num
   const at = index < 0 ? 0 : Math.min(index, current.length);
   current.splice(at, 0, task);
   return current;
+}
+
+/**
+ * One task's saves. They are sent one after another (each waits on `tail`),
+ * so answers arrive in the order they were sent and the last answer is the
+ * task's real state.
+ */
+export interface Ledger {
+  /** The task as the store last confirmed it (null once deleted). */
+  confirmed: Task | null;
+  /** When it confirmed that; 0 when `confirmed` came from a read. */
+  confirmedAt: number;
+  /** Changes waiting for an answer, oldest first; a null patch is a delete. */
+  pending: Array<{ seq: number; patch: Partial<Task> | null }>;
+  /** The newest save in the queue; the next one starts after it settles. */
+  tail: Promise<void>;
+  /** Where the task sat in the list, to put it back there after a failed delete. */
+  index: number;
+}
+
+/** What to show for a task: its confirmed state with every queued change applied. */
+export function ledgerTask(ledger: Ledger): Task | null {
+  let task = ledger.confirmed;
+  for (const op of ledger.pending) {
+    task = op.patch === null || task === null ? null : { ...task, ...op.patch };
+  }
+  return task;
 }
