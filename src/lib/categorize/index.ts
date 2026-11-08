@@ -64,8 +64,8 @@ let cached: Categorizer | null = null;
 
 export function getCategorizer(): Categorizer {
   if (cached) return cached;
-  // Phase 8 will select a Claude-backed categorizer here when ANTHROPIC_API_KEY
-  // is present. Until then there is exactly one implementation.
+  // The default is the keyword rules. Gemini, when the user adds a key, is
+  // built in App.tsx (createGeminiCategorizer) with these rules as its fallback.
   cached = rulesCategorizer;
   return cached;
 }

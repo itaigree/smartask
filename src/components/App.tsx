@@ -13,7 +13,9 @@ import {
   categoryList, loadCustomCategories, saveCustomCategories,
 } from '../lib/categories.ts';
 import { classifyWithGemini, createGeminiCategorizer } from '../lib/categorize/gemini.ts';
-import { forgetDeviceSettings, forgetQuestion, leftBehind } from '../lib/forget.ts';
+import {
+  forgetDeviceSettings, forgetPendingDraft, forgetQuestion, leftBehind,
+} from '../lib/forget.ts';
 import {
   countLocalTasks, createLocalRepository, requestPersistentStorage,
 } from '../lib/local-store.ts';
@@ -152,6 +154,7 @@ export default function App() {
    * since ⏻ is how a shared device is cleaned up.
    */
   function leave() {
+    forgetPendingDraft();
     if (mode === 'notion') {
       clearConfig();
       setConfig(null);

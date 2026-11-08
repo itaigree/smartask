@@ -60,7 +60,10 @@ will be saved.
 With AI off, the category comes from English keywords in the task. Two rules
 decide it:
 
-- A **tag** that names a category wins outright — `@work` is a deliberate statement.
+- A **tag** that names a category — a built-in or one you created — wins
+  outright, with AI on or off. `@work` and `@research` are deliberate
+  statements; write a two-word category with a dash, `@side-project`. With AI
+  on, Gemini still finds the date.
 - A **project** that names a category is only a fallback, used when nothing else
   matched. `#home` on "pay the electricity bill" means the household project,
   so the task is still Finance.
@@ -167,7 +170,8 @@ Notion does not allow commas in its options.
 
 Out of the box, categories come from keyword rules in
 `src/lib/categorize/rules.ts` — instant, free, offline, English-only, and
-sometimes wrong. That is why, with AI off, a Hebrew task goes to Inbox.
+sometimes wrong. That is why, with AI off, a Hebrew task goes to Inbox unless
+a tag names its category.
 
 Press **✦ AI** in the header to add a free [Google AI Studio
 key](https://aistudio.google.com/apikey) and Gemini classifies instead, reading
@@ -183,7 +187,9 @@ those and costs nothing.
   anything else) works, and it also finds the due date — "מחר", "ביום שלישי",
   "בעוד שבוע" — taking the date words out of the title. A date the parser
   already understood (English "friday", "25/12") always wins; Gemini only fills
-  the gap. Gemini's title is used only if every word in it is already in yours.
+  the gap. Gemini's title is used only if it is your text with one short run of
+  words — the date — cut out, and never a "not"; otherwise your own wording is
+  kept and only the date is taken.
 - **Your categories first, a new one only when nothing fits.** Gemini sees
   every category you have — the built-ins and your own — and files the task
   into the best fit, even a broader one. Only when none of them fits does it

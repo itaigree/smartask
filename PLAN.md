@@ -122,6 +122,53 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-08 — Bug-hunt chunk 3: the remaining findings.**
+
+Done by five agents in parallel, each owning separate files, then merged and
+checked together (251 unit tests; every browser suite and each agent's own
+browser checks against the combined build).
+
+- Notion: the list is read with a filter (open tasks plus the last ~15 days of
+  done ones), so old open tasks no longer fall off the 2000-page cap, with an
+  unfiltered fallback if Notion refuses the filter (R1-25). A deleted task, a
+  read-only integration and a lost reply after a save each get their own
+  message (R1-36, R3-3, R2-6); only real fetch failures are called connection
+  problems (R1-35); tasks marked Done in Notion leave the Done view (R1-37);
+  invisible characters are stripped from pasted tokens and keys (R1-49).
+- Gemini and categories: one category identity rule (case, invisible marks,
+  spacing, long names) used everywhere (R2-1, R2-3, R2-12, R3-9); Gemini titles
+  may only cut one short run of words and never a "not" (R1-11); malformed
+  replies never take a category from the reason (R1-13); a retired model shows
+  as unavailable (R1-23); quota errors say what actually ran out (R1-41); the
+  fallback note says whether a date was read (R2-7); a tag naming any of your
+  categories wins with AI on or off (R2-9, R1-43); key-restriction advice uses
+  the origin pattern that works (R1-24).
+- Storage and voice: ⏻ offers to forget the Gemini key and custom categories
+  too, and always forgets an unsaved draft (R1-14); restore de-duplicates ids
+  and reports unreadable entries (R1-38, R1-39); blocked site data is explained
+  instead of crashing (R1-40); a failed mic start no longer kills the mic
+  (R1-46); the language toggle hides while listening (R1-48); an Android
+  "aborted" mid-sentence is reported (R1-47).
+- Layout and accessibility: the category sheet is a real modal dialog that
+  keeps focus (R1-27, R1-30); Android back closes the sheet, AI settings and
+  the connect form (R3-2); save errors sit in the sticky header (R1-31); dark
+  dropdown and chip contrast fixed to AA (R1-32, R1-33); the Done tab shows at
+  320 px (R1-53); long chips truncate (R1-54); focus is not hidden under the
+  header (R1-55); ↻ and ⏻ have real names (R1-56); connect-screen wording
+  (R3-11).
+- Scripts and docs: README rewritten to match the app; npm start removed
+  (R1-57); the deploy workflow fails clearly when Pages is not enabled (R1-29);
+  the scripts' .env loader, token checks and messages fixed (R2-13, R2-14,
+  R2-15, R2-17); Node >= 22.18 declared (R2-18); no hardcoded test count
+  (R2-19); the note syntax is documented correctly (R3-7).
+
+Not done, by choice: a banner when the 2000-page cap is hit (the filter makes
+it unreachable for a personal list); Sort applying Gemini's date to undated
+tasks (R2-7, second half); restarting the mic in a new language mid-sentence
+(R1-48, hidden instead). Unverified without a real device or real Notion: the
+list filter's exact behaviour (falls back if refused), Android "aborted"
+timing (R1-47), back after a reload while an overlay is open.
+
 **2026-11-08 — Bug-hunt chunk 2: board timing and saving.**
 
 Most of these came from one cause: the board kept a single copy of the list,

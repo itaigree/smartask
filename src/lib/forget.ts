@@ -42,6 +42,19 @@ export function forgetQuestion(left: LeftBehind, keptTasks = false): string | nu
   );
 }
 
+/**
+ * The text of a task that was still saving when the app closed (QuickAdd puts
+ * it back in the box next time). It belongs to whoever is leaving: neither the
+ * next person nor the other store should be offered it.
+ */
+export function forgetPendingDraft(): void {
+  try {
+    window.localStorage.removeItem('smartask.pending.v1');
+  } catch {
+    // Storage blocked: there is nothing saved to forget.
+  }
+}
+
 /** Forget the Gemini key and the custom category names. Never touches tasks. */
 export function forgetDeviceSettings(): void {
   clearGeminiConfig();
