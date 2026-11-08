@@ -227,6 +227,9 @@ export function parseGeminiReply(
           },
         };
       }
+      // The reply was JSON with a category we cannot use. Do not go hunting for
+      // a category word in its reason or title ("…needs work" is not Work).
+      if (typeof parsed.category === 'string') return null;
     } catch {
       // Fall through to the bare-word search below.
     }
@@ -247,11 +250,26 @@ export function parseGeminiReply(
 /** Longest name the model may invent; the user's own can be longer (up to 40). */
 const MAX_NEW_CATEGORY_LENGTH = 24;
 
+/**
+ * Hebrew names a model may answer with for a built-in — the task is often
+ * Hebrew — so "עבודה" files under Work instead of becoming a second Work.
+ */
+const HEBREW_BUILT_INS: Record<string, BuiltInCategory> = {
+  'עבודה': 'Work', 'עבודות': 'Work',
+  'אישי': 'Personal', 'אישית': 'Personal', 'אישיים': 'Personal',
+  'סידורים': 'Errands', 'סידור': 'Errands', 'קניות': 'Errands',
+  'בריאות': 'Health',
+  'כספים': 'Finance', 'כסף': 'Finance', 'פיננסים': 'Finance', 'כלכלה': 'Finance',
+  'לימודים': 'Learning', 'למידה': 'Learning', 'לימוד': 'Learning',
+  'בית': 'Home', 'הבית': 'Home', 'משק בית': 'Home',
+  'תיבת דואר': 'Inbox', 'דואר נכנס': 'Inbox',
+};
+
 /** Spellings of one name that count as the same category: "Cars"/"car", "Glasses"/"glass". */
 function categoryKeys(name: string): string[] {
   const letters = name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
   if (letters.length <= 3) return [letters];
-  return [letters, letters.replace(/s$/, ''), letters.replace(/es$/, '')];
+  return [letters, letters.replace(/s$/, ''), letters.replace(/es$/, ''), letters.replace(/ies$/, 'y')];
 }
 
 function sameCategory(a: string, b: string): boolean {
@@ -274,6 +292,9 @@ export function acceptNewCategory(
   if (typeof raw !== 'string') return null;
   const name = normalizeCategoryName(raw.replace(/^["'\s]+|["'.\s]+$/g, ''));
   if (!name) return null;
+
+  const builtIn = HEBREW_BUILT_INS[name];
+  if (builtIn && existing.includes(builtIn)) return { name: builtIn, created: false };
 
   const twin = existing.find((c) => sameCategory(c, name));
   if (twin) return { name: twin, created: false };

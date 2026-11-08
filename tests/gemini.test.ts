@@ -360,3 +360,15 @@ test('classifyWithGemini files into an existing category or reports a created on
     GeminiError,
   );
 });
+
+test('review: -ies plurals, Hebrew built-in names, and no category fished from the reason', () => {
+  const existing = [...CATEGORIES, 'Groceries'];
+  assert.deepEqual(acceptNewCategory('Grocery', existing), { name: 'Groceries', created: false });
+  assert.deepEqual(acceptNewCategory('Hobbies', [...CATEGORIES, 'Hobby']), { name: 'Hobby', created: false });
+  assert.deepEqual(acceptNewCategory('עבודה', existing), { name: 'Work', created: false });
+  assert.deepEqual(acceptNewCategory('בית', existing), { name: 'Home', created: false });
+
+  const reply = '{"category":"Car Maintenance And Repair","new":true,"reason":"the car needs work"}';
+  assert.equal(parseGeminiReply(reply, CATEGORIES, { allowNew: true }), null);
+  assert.equal(parseGeminiReply('{"category":"Pets, Animals","title":"feed the cat before work"}', CATEGORIES, { allowNew: true }), null);
+});

@@ -39,9 +39,18 @@ export default function App() {
   const [revision, setRevision] = useState(0);
   const [customCategories, setCustomCategoriesState] = useState<string[]>([]);
 
+  // Categories Gemini has just created are offered straight away, before the
+  // saved task comes back and the saved list catches up — so two tasks added
+  // in quick succession share one new category instead of inventing two.
+  const createdRef = useRef<string[]>([]);
+
   const setCustomCategories = useCallback((next: string[]) => {
     setCustomCategoriesState(next);
     saveCustomCategories(next);
+    // Once a created name is in the saved list, the list owns it: removing it
+    // there must remove it for good, not leave it offered from here.
+    const saved = new Set(next.map((c) => c.toLowerCase()));
+    createdRef.current = createdRef.current.filter((c) => !saved.has(c.toLowerCase()));
   }, []);
 
   // Gemini reads the category list when it classifies, not when it was set up,
@@ -49,10 +58,6 @@ export default function App() {
   const categoriesRef = useRef<string[]>([]);
   categoriesRef.current = categoryList(customCategories);
 
-  // Categories Gemini has just created are offered straight away, before the
-  // saved task comes back and the list above catches up — so two tasks added
-  // in quick succession share one new category instead of inventing two.
-  const createdRef = useRef<string[]>([]);
   const offeredCategories = useCallback(
     () => categoryList([...categoriesRef.current, ...createdRef.current]),
     [],

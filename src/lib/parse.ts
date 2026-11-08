@@ -85,13 +85,16 @@ export function addMonths(date: Date, months: number): Date {
 export function localDateOf(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const text = value.trim();
-  const plain = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  if (plain) {
-    return makeDate(Number(plain[1]), Number(plain[2]) - 1, Number(plain[3])) ? text : null;
-  }
-  if (!/^\d{4}-\d{2}-\d{2}T/.test(text)) return null;
-  const parsed = new Date(text);
-  return Number.isNaN(parsed.getTime()) ? null : toISODate(parsed);
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](.+))?$/.exec(text);
+  if (!m) return null;
+  // An impossible day is refused with or without a time, never rolled over.
+  if (!makeDate(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) return null;
+  const day = `${m[1]}-${m[2]}-${m[3]}`;
+  if (!m[4]) return day;
+  // "2026-11-20 09:30" (a hand-edited backup) parses once the space is a T. A
+  // time that still does not parse leaves the day itself, rather than nothing.
+  const parsed = new Date(`${day}T${m[4]}`);
+  return Number.isNaN(parsed.getTime()) ? day : toISODate(parsed);
 }
 
 /**
@@ -150,7 +153,7 @@ const WE = "(?![\\p{L}\\p{N}_/]|['’]\\p{L})";
  * start (ב10.11, ב-10/11); a Latin letter, another digit or a decimal point
  * may not (v3.12, 1.5.2).
  */
-const NS = "(?<![\\p{N}A-Za-z_/.:,'’])";
+const NS = "(?<![\\p{N}A-Za-z_/.,'’])(?<!\\p{N}:)";
 const NE = "(?![\\p{N}A-Za-z_]|[./:,]\\p{N})";
 
 const MONTH_NAMES = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join('|');
@@ -159,12 +162,15 @@ const WEEKDAY_NAMES = WEEKDAYS.join('|');
 /** Words after a number that make it a quantity, not a date: "1.5 ליטר", "1/2 kg". */
 const UNITS = [
   'kg', 'g', 'gr', 'gram', 'grams', 'mg', 'l', 'lt', 'liter', 'liters', 'litre', 'litres',
-  'ml', 'km', 'm', 'cm', 'mm', 'lb', 'lbs', 'oz', 'kilo', 'kilos', 'cup', 'cups', 'tbsp',
-  'tsp', 'spoon', 'spoons', 'h', 'hr', 'hrs', 'hour', 'hours', 'min', 'mins', 'minute',
-  'minutes', 'sec', 'percent', 'pct', 'x', 'nis', 'ils', 'usd', 'eur', 'euro', 'euros',
-  'dollar', 'dollars', 'shekel', 'shekels',
-  'ליטר', 'ליטרים', 'קילו', 'ק"ג', 'קג', 'גרם', 'גר', 'מ"ל', 'מל', 'ק"מ', 'קמ', 'מטר',
-  'מטרים', 'ס"מ', 'סמ', 'מ"מ', 'שעה', 'שעות', 'דקה', 'דקות', 'ש"ח', 'שח', 'שקל', 'שקלים',
+  'ml', 'km', 'm', 'cm', 'mm', 'inch', 'inches', 'in', 'ft', 'feet', 'foot', 'lb', 'lbs',
+  'oz', 'kilo', 'kilos', 'cup', 'cups', 'tbsp', 'tsp', 'teaspoon', 'teaspoons',
+  'tablespoon', 'tablespoons', 'spoon', 'spoons', 'dozen', 'pcs', 'pieces', 'packs',
+  'hrs', 'hours', 'min', 'mins', 'minute', 'minutes', 'sec', 'day', 'days', 'week', 'weeks',
+  'month', 'months', 'year', 'years', 'percent', 'pct', 'x', 'nis', 'ils', 'usd', 'eur',
+  'euro', 'euros', 'dollar', 'dollars', 'shekel', 'shekels', 'bucks',
+  'ליטר', 'ליטרים', 'קילו', 'קילוגרם', 'ק"ג', 'קג', 'גרם', 'גר', 'מ"ל', 'מל', 'ק"מ', 'קמ',
+  'מטר', 'מטרים', 'ס"מ', 'סמ', 'מ"מ', 'אינץ\'', 'שעות', 'דקה', 'דקות', 'ימים', 'יום',
+  'שבועות', 'חודשים', 'שנים', 'ש"ח', 'שח', 'שקל', 'שקלים', 'דולר', 'דולרים', 'יורו',
   'אחוז', 'אחוזים', 'יחידות', 'כוס', 'כוסות', 'כף', 'כפות', 'כפית', 'כפיות', 'מנות',
   'קופסאות', 'בקבוק', 'בקבוקים', 'חבילה', 'חבילות',
 ];
@@ -174,9 +180,7 @@ const UNIT_AFTER = new RegExp(`^\\s*(?:[%₪$€£]|(?:${UNITS.join('|')})${WE})
 const TIME_OR_MONEY_BEFORE = /(?:(?:^|\s)(?:at|@|בשעה|שעה)\s*|[₪$€£]\s*)$/u;
 
 /** English words that can sit right before a date: "pay rent by 25.12". */
-const DATE_WORDS_BEFORE = new Set([
-  'on', 'by', 'due', 'before', 'until', 'till', 'til', 'for', 'from', 'after', 'since', 'to',
-]);
+const DATE_WORDS_BEFORE = new Set(['on', 'by', 'due', 'before', 'until', 'till', 'til', 'for']);
 
 /**
  * Is a day/month with no year really meant as a date?
@@ -186,15 +190,30 @@ const DATE_WORDS_BEFORE = new Set([
  * keeps the text in the title, and Gemini can still read it. So when in doubt,
  * this says no.
  */
-function plausibleDayMonth(text: string, start: number, end: number, separator: string): boolean {
+function plausibleDayMonth(
+  text: string,
+  start: number,
+  end: number,
+  separator: string,
+  day: number,
+  month: number,
+): boolean {
   const before = text.slice(0, start);
-  if (UNIT_AFTER.test(text.slice(end))) return false;
-  if (TIME_OR_MONEY_BEFORE.test(before)) return false;
+  if (separator === '/' && day === 24 && month === 7) return false; // "24/7 pharmacy"
+  // A unit after a quantity-like number: "1.5 ליטר", "ב-1.5 חודשים", "1/2 kg" —
+  // but "15/11 חבילה" (a day after a month cannot be a fraction) is still a date.
+  const quantityLike = separator === '.' || day < month;
+  if (quantityLike && UNIT_AFTER.test(text.slice(end))) return false;
+  // "by", "עד", "ב-" right before it: otherwise, this is a date.
+  if (DATE_LEAD_IN.test(before)) return true;
   if (separator === '.') {
+    if (TIME_OR_MONEY_BEFORE.test(before)) return false;
     // "python 3.12", "pay 5.10": a dotted number right after an English word is
     // a version or an amount. Hebrew writes dates this way (פגישה 25.12), English rarely does.
     const word = /(?:^|\s)([a-z][a-z0-9'’]*)\s*$/.exec(before);
     if (word && !DATE_WORDS_BEFORE.has(word[1])) return false;
+  } else if (/[₪$€£]\s*$/.test(before)) {
+    return false;
   }
   return true;
 }
@@ -209,25 +228,45 @@ function dateMatchers(now: Date): Array<[RegExp, Builder]> {
     [re(`${NS}(\\d{4})-(\\d{2})-(\\d{2})${NE}`), (m) =>
       makeDate(Number(m[1]), Number(m[2]) - 1, Number(m[3]))],
 
-    // Day/month with a year: 25/12/2026, 25.12.26
-    [re(`${NS}(\\d{1,2})([./])(\\d{1,2})\\2(\\d{4}|\\d{2})${NE}`), (m) =>
-      makeDate(fullYear(m[4]), Number(m[3]) - 1, Number(m[1]))],
+    // Day/month with a year: 25/12/2026, 25.12.26 — but not a version such as
+    // "update app to 1.5.20", whose "year" is long past.
+    [re(`${NS}(\\d{1,2})([./])(\\d{1,2})\\2(\\d{4}|\\d{2})${NE}`), (m) => {
+      const year = fullYear(m[4]);
+      return plausibleYear(year, now) ? makeDate(year, Number(m[3]) - 1, Number(m[1])) : null;
+    }],
 
-    // "dec 25", "december 25th, 2027"
-    [re(`${WS}(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?${NE}`), (m) =>
-      m[3]
+    // "december 25th, 2027", "3rd of march 2028" — the year only when it is a
+    // believable one and not an amount ("dec 3 2000 nis"); otherwise the
+    // matchers below take the day and month alone.
+    [re(`${WS}(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})${NE}`), (m, text) =>
+      yearFits(m, text, Number(m[3]), now)
         ? makeDate(Number(m[3]), MONTHS[m[1]], Number(m[2]))
-        : nextDayMonth(now, MONTHS[m[1]], Number(m[2]))],
-    // "25 dec", "3rd of march 2028"
-    [re(`${NS}(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_NAMES})\\.?(?:,?\\s+(\\d{4}))?${WE}`), (m) =>
-      m[3]
+        : null],
+    [re(`${NS}(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_NAMES})\\.?,?\\s+(\\d{4})${NE}`), (m, text) =>
+      yearFits(m, text, Number(m[3]), now)
         ? makeDate(Number(m[3]), MONTHS[m[2]], Number(m[1]))
-        : nextDayMonth(now, MONTHS[m[2]], Number(m[1]))],
+        : null],
+    // "dec 25", "25 dec"
+    [re(`${WS}(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?${NE}`), (m) =>
+      nextDayMonth(now, MONTHS[m[1]], Number(m[2]))],
+    [re(`${NS}(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_NAMES})\\.?${WE}`), (m) =>
+      nextDayMonth(now, MONTHS[m[2]], Number(m[1]))],
 
-    // Relative words
+    // Relative words for the next two days beat a bare day/month ("at 9.05 tomorrow").
     [re(`${WS}day after tomorrow${WE}`), () => addDays(now, 2)],
     [re(`${WS}(?:today|tonight|this evening)${WE}`), () => addDays(now, 0)],
     [re(`${WS}(?:tomorrow|tmrw?|tmw)${WE}`), () => addDays(now, 1)],
+
+    // Day/month with no year: 25/12, 25.12, ב-10/11. More specific than a
+    // weekday, so "dentist monday 16/11" is the 16th; refused when it looks
+    // like a quantity, a version, a price or a time.
+    [re(`${NS}(\\d{1,2})([./])(\\d{1,2})${NE}`), (m, text) => {
+      const day = Number(m[1]);
+      const month = Number(m[3]);
+      if (!plausibleDayMonth(text, m.index, m.index + m[0].length, m[2], day, month)) return null;
+      return nextDayMonth(now, month - 1, day);
+    }],
+
     [re(`${WS}next week${WE}`), () => addDays(now, 7)],
     [re(`${WS}next month${WE}`), () => addMonths(startOfDay(now), 1)],
     [re(`${WS}in (\\d{1,3}) (days?|weeks?|months?)${WE}`), (m) => {
@@ -253,14 +292,17 @@ function dateMatchers(now: Date): Array<[RegExp, Builder]> {
       const wd = WEEKDAY_ALIASES[m[1]];
       return wd === undefined ? null : addDays(now, daysUntilWeekday(now, wd));
     }],
-
-    // Day/month with no year — last, because it is the most ambiguous:
-    // 25/12, 25.12, ב-10/11. "tomorrow" elsewhere in the text beats it.
-    [re(`${NS}(\\d{1,2})([./])(\\d{1,2})${NE}`), (m, text) => {
-      if (!plausibleDayMonth(text, m.index, m.index + m[0].length, m[2])) return null;
-      return nextDayMonth(now, Number(m[3]) - 1, Number(m[1]));
-    }],
   ];
+}
+
+/** A typed year a task could mean: last year up to ten years ahead. */
+function plausibleYear(year: number, now: Date): boolean {
+  return year >= now.getFullYear() - 1 && year <= now.getFullYear() + 10;
+}
+
+/** Is the four-digit number after a month-name date its year, or an amount? */
+function yearFits(m: RegExpExecArray, text: string, year: number, now: Date): boolean {
+  return plausibleYear(year, now) && !UNIT_AFTER.test(text.slice(m.index + m[0].length));
 }
 
 /**
@@ -269,7 +311,11 @@ function dateMatchers(now: Date): Array<[RegExp, Builder]> {
  * just before the date, so a title that merely *ends* in "on" keeps it.
  */
 const LEAD_IN =
-  /(?<=^|\s)(?:(?:by|on|at|due|before|until|till)\s+|(?:עד|בתאריך|ביום|תאריך)\s*(?:ה\s*[-־]?\s*)?|ו?[בלמה]\s*[-־]?\s*)$/u;
+  /(?<=^|\s)(?:(?:by|on|at|due|before|until|till)\s+|(?:עד|לפני|בתאריך|ביום|לתאריך|תאריך)\s*(?:[הל]\s*[-־–—]?\s*)?|ו?[בלמה]\s*[-־–—]?\s*)$/u;
+
+/** The same words minus "at", which introduces a time ("at 9.05") as often as a date. */
+const DATE_LEAD_IN =
+  /(?<=^|\s)(?:(?:by|on|due|before|until|till)\s+|(?:עד|לפני|בתאריך|ביום|לתאריך|תאריך)\s*(?:[הל]\s*[-־–—]?\s*)?|ו?[בלמה]\s*[-־–—]?\s*)$/u;
 
 interface DateMatch {
   due: string;
@@ -300,6 +346,8 @@ function matchDate(text: string, now: Date): DateMatch | null {
 
 /** Unambiguous wherever they appear: nobody writes "asap" by accident. */
 const PRIORITY_PHRASES: Array<[RegExp, Priority]> = [
+  // A negated priority is Low, wherever it is: "not really urgent", "non-urgent".
+  [new RegExp(`${WS}(?:(?:it|this|that)(?:['’]s)?\\s+)?(?:not|non|isn['’]?t|is not|nothing)[\\s-]+(?:(?:very|that|so|too|really|super|particularly)\\s+)?(?:urgent|important|critical|(?:a\\s+)?(?:top|high)\\s+priority)${WE}`, 'u'), 'Low'],
   [new RegExp(`${WS}(?:asap|as soon as possible|top priority)${WE}`, 'u'), 'Urgent'],
   [new RegExp(`${WS}now!+(?=\\s|$)`, 'u'), 'Urgent'],
   [new RegExp(`${WS}high priority${WE}`, 'u'), 'High'],
@@ -312,8 +360,9 @@ const PRIORITY_PHRASES: Array<[RegExp, Priority]> = [
  * urgent" — but not "buy emergency kit" or "file important documents".
  */
 const PRIORITY_MARKERS: Array<[RegExp, Priority]> = [
-  [new RegExp(`${WS}(?:(?:not|isn'?t|is not|nothing)\\s+(?:very\\s+|that\\s+|so\\s+)?(?:urgent|important|critical))${WE}`, 'u'), 'Low'],
-  [new RegExp(`${WS}(?:urgent|critical|emergency)${WE}`, 'u'), 'Urgent'],
+  // Not when the word is part of a name for something: "urgent care",
+  // "emergency room", "kit for emergency".
+  [new RegExp(`${WS}(?<!(?:^|\\s)(?:for|of|in|an|the|case)\\s+)(?:urgent|critical|emergency)(?!\\s+(?:care|room|rooms|services?|kits?|contacts?|numbers?|fund|exit|vet|clinic|department|ward|line|brake)${WE})${WE}`, 'u'), 'Urgent'],
   [new RegExp(`${WS}(?:important|soon)${WE}`, 'u'), 'High'],
   [new RegExp(`${WS}(?:someday|whenever|eventually)${WE}`, 'u'), 'Low'],
 ];
@@ -325,7 +374,8 @@ const PRIORITY_TOKENS: Record<string, Priority> = {
   low: 'Low', someday: 'Low',
 };
 
-const EDGE = /^[\s\p{P}\p{S}]*$/u;
+/** Nothing but space, punctuation, symbols and emoji parts (variation selectors, ZWJ). */
+const EDGE = /^[\s\p{P}\p{S}\p{M}\p{Cf}]*$/u;
 
 function matchPriority(text: string): { priority: Priority; spans: Span[] } {
   // Bang notation wins: `!` high, `!!` or more urgent.
@@ -367,19 +417,32 @@ type Span = [number, number];
  * result is still an index into the original. (Replacing each span with one
  * space shifted later positions and cut dates out of the wrong place.)
  */
-function blank(text: string, spans: Span[]): string {
+function blank(text: string, spans: Span[], filler = ' '): string {
   let out = text;
   for (const [start, end] of spans) {
-    out = out.slice(0, start) + ' '.repeat(end - start) + out.slice(end);
+    out = out.slice(0, start) + filler.repeat(end - start) + out.slice(end);
   }
   return out;
 }
 
-/** Lowercase without changing the length ('İ' lowercases to two characters). */
-function lowerSameLength(text: string): string {
+/**
+ * A link is blanked with a character that is not a space, so it still stands
+ * between the words around it: "on <link> by friday" must not treat "on" as
+ * the word right before the date and cut the link out with it.
+ */
+const OPAQUE = '\uFFFF';
+
+/**
+ * The text as the matchers see it: lowercased, and with Hebrew gershayim and
+ * geresh as the plain quotes phone keyboards usually type (ק״ג = ק"ג) — every
+ * character mapped to exactly one, so indexes still line up with the original.
+ */
+function scanText(text: string): string {
   return text
     .split('')
     .map((c) => {
+      if (c === '״') return '"';
+      if (c === '׳') return "'";
       const lower = c.toLowerCase();
       return lower.length === 1 ? lower : c;
     })
@@ -405,7 +468,8 @@ function cutSpans(text: string, spans: Span[]): string {
 function tidyTitle(raw: string): string {
   return raw
     .replace(/\s+/g, ' ')
-    .replace(/\s+([,;:.!?])/g, '$1')
+    .replace(/[([]\s*[)\]]/g, '') // brackets a cut left empty: "(non-urgent)"
+    .replace(/\s+([,;:.!?])(?=\s|$)/g, '$1') // "call bank , please", but not "to .env"
     .replace(/^[\s,;:\-–—־]+/, '')
     .replace(/[\s,;:\-–—־]+$/, '')
     .replace(/^(?:and|then|also)\s+/i, '')
@@ -435,8 +499,12 @@ export function parseTask(input: string, now: Date = new Date()): ParsedDraft {
 
   // Everything is matched against `scan`: the head lowercased and, step by
   // step, with already-claimed text blanked — always the same length as `head`.
-  let scan = lowerSameLength(head);
-  scan = blank(scan, [...scan.matchAll(LINK)].map((m) => [m.index!, m.index! + m[0].length]));
+  let scan = scanText(head);
+  scan = blank(
+    scan,
+    [...scan.matchAll(LINK)].map((m) => [m.index!, m.index! + m[0].length]),
+    OPAQUE,
+  );
 
   const cut: Span[] = [];
 

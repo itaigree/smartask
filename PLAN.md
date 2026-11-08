@@ -132,10 +132,11 @@ From `docs/bug-hunt-2026-11-06.md`, the parser, date and Notion-id group:
   word edges are stricter (R1-19). Date patterns try every match and only real
   month names (R1-9); a year after a month name is honoured (R1-20); impossible
   dates are rejected, 29/02 waits for a leap year (R1-21); months are added with
-  the day clamped (R1-22). A bare day.month with no year is the last, weakest
-  pattern and is refused before a unit, after a time or price cue, or (dotted)
-  after an English word (R1-4) — a missed date keeps its text and Gemini can
-  fill it. Priority words are case-insensitive (R1-18), ambiguous ones count
+  the day clamped (R1-22). A bare day.month with no year ranks below
+  today/tomorrow but above weekdays ("dentist monday 16/11" is the 16th), and is
+  refused when it looks like a quantity (unit after it), a time or price, a
+  version (dotted, after an English word), or 24/7 (R1-4) — a missed date keeps
+  its text and Gemini can fill it. Priority words are case-insensitive (R1-18), ambiguous ones count
   only at the start or end, "not urgent" is Low (R1-17), `now!` and `!!!!` work
   (R1-45), and `@urgent`/`#asap` set priority. A preposition is removed only
   with the date it introduces, in English and Hebrew (R1-44, R2-2). Hebrew
@@ -150,6 +151,15 @@ From `docs/bug-hunt-2026-11-06.md`, the parser, date and Notion-id group:
   `acceptNewCategory` rejects bad names and maps plural/case twins to the
   existing category. App remembers created names at once so quick captures
   and Sort with Gemini reuse them.
+- Review: three adversarial reviewers (parser differential on 409 inputs plus a
+  50k-input fuzzer; dates and ids; the feature in the built app with Playwright)
+  found 19 issues, all fixed with tests: links cut out after "on/at", a weekday
+  beating an explicit date, amounts read as years, Hebrew dates before
+  "שעה"/nouns refused, punctuation glued, more negations, emoji edges, noun
+  phrases ("urgent care"), more units and Hebrew lead-ins, hand-written
+  timestamps in backups, removed categories coming back, -ies plurals, Hebrew
+  names of built-ins, and a category fished out of Gemini's reason text.
+  Fragmented titles in the fuzzer: 20,416 before chunk 1, 18 after.
 
 **2026-11-06 — Phase 15: editable and custom categories.**
 

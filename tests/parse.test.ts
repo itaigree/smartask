@@ -258,3 +258,101 @@ test('localDateOf turns a Notion timestamp into the local day', () => {
   const stamp = '2026-11-06T14:00:00.000+02:00';
   assert.equal(localDateOf(stamp), toISODate(new Date(stamp)));
 });
+
+/* ---- Review of the chunk-1 fixes ---- */
+
+test('a link between a lead-in word and a date stays in the title', () => {
+  const cases: Array<[string, string]> = [
+    ['comment on https://github.com/acme/app/pull/42 by friday', 'comment on https://github.com/acme/app/pull/42'],
+    ['buy tickets at www.eventim.co.il/show/123 tomorrow', 'buy tickets at www.eventim.co.il/show/123'],
+    ['להירשם ב-https://forms.gle/x 15/11', 'להירשם ב-https://forms.gle/x'],
+  ];
+  for (const [input, title] of cases) {
+    const d = parseTask(input, NOW);
+    assert.equal(d.title, title, input);
+    assert.notEqual(d.due, null, input);
+  }
+});
+
+test('an explicit day/month beats a weekday or "next week" in the same text', () => {
+  assert.equal(parseTask('dentist monday 16/11', NOW).due, '2026-11-16');
+  assert.equal(parseTask('party friday 25/12', NOW).due, '2026-12-25');
+  assert.equal(parseTask('dentist 16/11 next week', NOW).due, '2026-11-16');
+  assert.equal(parseTask('meeting at 9.05 tomorrow', NOW).due, iso(1), 'but not a time over "tomorrow"');
+});
+
+test('an amount after a month-name date is not its year', () => {
+  const a = parseTask('pay plumber dec 3 2000', NOW);
+  assert.equal(a.due, '2026-12-03');
+  assert.equal(a.title, 'pay plumber 2000');
+  assert.equal(parseTask('pay landlord 5 dec 2000 nis', NOW).due, '2026-12-05');
+  assert.equal(parseTask('pay rent dec 1 6000', NOW).due, '2026-12-01');
+  assert.equal(parseTask('update app to 1.5.20', NOW).due, null, 'a past two-digit year is a version');
+});
+
+test('a Hebrew date followed by a time or a noun is still a date; quantities are not', () => {
+  assert.equal(parseTask('תור לרופא ב-15/11 שעה 9:30', NOW).due, '2026-11-15');
+  assert.equal(parseTask('פגישה עם דני 20/11 שעה 14:00', NOW).due, '2026-11-20');
+  assert.equal(parseTask('ישיבה ב-25.12 שעה 10', NOW).due, '2026-12-25');
+  assert.equal(parseTask('לשלוח ב-15/11 חבילה לאמא', NOW).due, '2026-11-15');
+  for (const input of [
+    'להאריך מנוי ב-1.5 חודשים', 'לקנות 1.5 ק״ג בשר', 'לשלם 12.10 ש״ח', 'buy 1/2 dozen eggs',
+    'add 1/4 teaspoon salt', 'rent bike for 1.5 days', 'upgrade python to 3.12', 'find 24/7 pharmacy',
+  ]) {
+    const d = parseTask(input, NOW);
+    assert.equal(d.due, null, input);
+    assert.equal(d.title, input, input);
+  }
+});
+
+test('slash dates after "at", a colon or a link are found', () => {
+  assert.equal(parseTask('party at 25/12', NOW).due, '2026-12-25');
+  assert.equal(parseTask('deadline:25/12', NOW).due, '2026-12-25');
+  assert.equal(parseTask('buy tickets at www.x.com/y 25/12', NOW).due, '2026-12-25');
+});
+
+test('titles keep their own punctuation when nothing was cut', () => {
+  for (const input of ['add api key to .env file', 'learn .NET core', 'add !important to button', 'call mom :)']) {
+    assert.equal(parseTask(input, NOW).title, input);
+  }
+});
+
+test('more negations, emoji edges and noun phrases', () => {
+  const cases: Array<[string, string, string]> = [
+    ['review PR - not top priority', 'review PR', 'Low'],
+    ['call the plumber, not really urgent', 'call the plumber', 'Low'],
+    ['call the plumber (non-urgent)', 'call the plumber', 'Low'],
+    ['call plumber, it isn’t urgent', 'call plumber', 'Low'],
+    ['call plumber, not high priority', 'call plumber', 'Low'],
+    ['call mom urgent ❤️', 'call mom ❤️', 'Urgent'],
+    ['emergency room follow up', 'emergency room follow up', 'Normal'],
+    ['buy first aid kit for emergency', 'buy first aid kit for emergency', 'Normal'],
+  ];
+  for (const [input, title, priority] of cases) {
+    const d = parseTask(input, NOW);
+    assert.equal(d.title, title, input);
+    assert.equal(d.priority, priority, input);
+  }
+  const care = parseTask('urgent care appointment tomorrow', NOW);
+  assert.equal(care.title, 'urgent care appointment');
+  assert.equal(care.priority, 'Normal');
+});
+
+test('more Hebrew lead-ins leave with the date', () => {
+  assert.equal(parseTask('לשלם ארנונה עד ל-15/11', NOW).title, 'לשלם ארנונה');
+  assert.equal(parseTask('לסיים את הדוח לפני 15/11', NOW).title, 'לסיים את הדוח');
+  assert.equal(parseTask('בדיקה ב–25/12', NOW).title, 'בדיקה');
+});
+
+test('localDateOf keeps the day of a hand-written timestamp and refuses impossible ones', () => {
+  assert.equal(localDateOf('2026-11-20 09:30'), '2026-11-20');
+  assert.equal(localDateOf('2026-11-20T09'), '2026-11-20');
+  assert.equal(localDateOf('2026-11-31T10:00'), null);
+  assert.equal(localDateOf('2026-02-29T08:00:00Z'), null);
+});
+
+test('a dotted date with a year is a date even after an English word', () => {
+  assert.equal(parseTask('renew passport 25.12.2027', NOW).due, '2027-12-25');
+  assert.equal(parseTask('renew 25.12.27', NOW).due, '2027-12-25');
+  assert.equal(parseTask('update library 1.12.10', NOW).due, null, 'a past year is a version');
+});
