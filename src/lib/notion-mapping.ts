@@ -3,7 +3,7 @@ import {
   normalizeCategoryName, isPriority, isStatus,
   type NewTask, type Task, type TaskPatch,
 } from './types.ts';
-import { localDateOf, toISODate } from './parse.ts';
+import { addDays, localDateOf, toISODate } from './parse.ts';
 
 /**
  * The Notion page <-> Task mapping, with no SDK import, so it stays pure and
@@ -102,6 +102,7 @@ export function pageToTask(page: unknown): Task | null {
     object?: string;
     properties?: Props;
     created_time?: string;
+    last_edited_time?: string;
     url?: string;
     in_trash?: boolean;
     archived?: boolean;
@@ -112,7 +113,8 @@ export function pageToTask(page: unknown): Task | null {
   const props = p.properties;
   const category = readSelect(props, PROPS.category);
   const priority = readSelect(props, PROPS.priority);
-  const status = readSelect(props, PROPS.status);
+  const rawStatus = readSelect(props, PROPS.status);
+  const status = isStatus(rawStatus) ? rawStatus : 'Todo';
 
   return {
     id: p.id,
@@ -120,14 +122,59 @@ export function pageToTask(page: unknown): Task | null {
     // A category added in the app, or straight in Notion, is kept as is.
     category: normalizeCategoryName(category) ?? 'Inbox',
     priority: isPriority(priority) ? priority : 'Normal',
-    status: isStatus(status) ? status : 'Todo',
+    status,
     due: readDate(props, PROPS.due),
     project: readRichText(props, PROPS.project),
     tags: readMultiSelect(props, PROPS.tags),
     note: readRichText(props, PROPS.note),
     createdAt: p.created_time ?? new Date().toISOString(),
-    completedAt: readDate(props, PROPS.completedAt),
+    // Only the app stamps Completed. A task set to Done in Notion itself has
+    // none, and would sit in "Done, last 14 days" forever; its last edit is
+    // the best guess at when it was done.
+    completedAt: readDate(props, PROPS.completedAt)
+      ?? (status === 'Done' ? localDateOf(p.last_edited_time) : null),
     url: p.url ?? null,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Listing: which pages to read
+ * ------------------------------------------------------------------ */
+
+/**
+ * How far back the list reads Done tasks: the Done view's 14 days (views.ts),
+ * plus one so a time-zone offset never cuts its oldest day.
+ */
+const DONE_LOOKBACK_DAYS = 15;
+
+/** The earliest day a Done task is still read. */
+export function doneSince(now: Date): string {
+  return toISODate(addDays(now, -DONE_LOOKBACK_DAYS));
+}
+
+/**
+ * The query filter for the task list: every open task, and only recent Done
+ * ones. Done tasks are never removed from Notion, so reading them all made
+ * each load slower with every task ever finished, and once the history passed
+ * the page cap the oldest open tasks silently dropped off the list.
+ *
+ * A Done task with no Completed date (set to Done in Notion itself) counts as
+ * recent while it was edited recently, matching `pageToTask`.
+ */
+export function listFilter(now: Date) {
+  const since = doneSince(now);
+  return {
+    or: [
+      { property: PROPS.status, select: { does_not_equal: 'Done' } },
+      { property: PROPS.status, select: { is_empty: true as const } },
+      { property: PROPS.completedAt, date: { on_or_after: since } },
+      {
+        and: [
+          { property: PROPS.completedAt, date: { is_empty: true as const } },
+          { timestamp: 'last_edited_time' as const, last_edited_time: { on_or_after: since } },
+        ],
+      },
+    ],
   };
 }
 

@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pageToTask, newTaskToProperties, patchToProperties, PROPS, SCHEMA,
+  pageToTask, newTaskToProperties, patchToProperties, PROPS, SCHEMA, listFilter, doneSince,
 } from '../src/lib/notion-mapping.ts';
-import { toISODate } from '../src/lib/parse.ts';
+import { addDays, toISODate } from '../src/lib/parse.ts';
+import { buildView } from '../src/lib/views.ts';
 import { CATEGORIES, PRIORITIES, STATUSES, type NewTask } from '../src/lib/types.ts';
 
 function page(properties: Record<string, unknown>, extra: Record<string, unknown> = {}) {
@@ -151,6 +152,113 @@ test('R1-34: Completed is stamped with the local day, not the UTC one', (t) => {
     assert.equal(done[PROPS.completedAt].date.start, '2026-11-07');
   } finally {
     t.mock.timers.reset();
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
+});
+
+/* R1-37 and R1-25: Done tasks, and which pages the list reads. */
+
+/** Friday 6 November 2026, midday in Israel. */
+const NOW = new Date(2026, 10, 6, 12, 0, 0);
+const daysAgo = (n: number) => toISODate(addDays(NOW, -n));
+
+function donePage(
+  id: string,
+  { completed = null, edited = '2026-11-06T09:00:00.000Z', status = 'Done' }:
+    { completed?: string | null; edited?: string; status?: string | null } = {},
+) {
+  return page({
+    [PROPS.title]: { title: [{ plain_text: id }] },
+    [PROPS.status]: { select: status ? { name: status } : null },
+    [PROPS.completedAt]: { date: completed ? { start: completed } : null },
+  }, { id, last_edited_time: edited });
+}
+
+test('R1-37: a task set to Done in Notion itself is dated by its last edit', () => {
+  const edited = '2026-03-10T12:00:00.000Z';
+  const march = pageToTask(donePage('march', { edited }));
+  assert.equal(march?.completedAt, toISODate(new Date(edited)), 'the local day of the last edit');
+
+  const stamped = pageToTask(donePage('stamped', { completed: '2026-11-01', edited: '2026-11-05T12:00:00.000Z' }));
+  assert.equal(stamped?.completedAt, '2026-11-01', 'a real Completed date always wins');
+
+  const open = pageToTask(donePage('open', { status: 'Todo' }));
+  assert.equal(open?.completedAt, null, 'an open task is never given a completion date');
+});
+
+test('R1-37: a task marked Done in Notion in March is not "done in the last 14 days"', () => {
+  const tasks = [
+    pageToTask(donePage('march', { edited: '2026-03-10T12:00:00.000Z' }))!,
+    pageToTask(donePage('this week', { edited: '2026-11-04T12:00:00.000Z' }))!,
+  ];
+  const shown = buildView('done', tasks, NOW).groups.flatMap((g) => g.tasks.map((t) => t.title));
+  assert.deepEqual(shown, ['this week']);
+});
+
+/**
+ * Applies a query filter to a page the way Notion documents it, for the
+ * conditions `listFilter` uses. A stand-in for the real API, which the tests
+ * cannot reach.
+ */
+function matches(filter: any, pg: any): boolean {
+  if (filter.or) return filter.or.some((f: any) => matches(f, pg));
+  if (filter.and) return filter.and.every((f: any) => matches(f, pg));
+  if (filter.timestamp) {
+    const value = pg[filter.timestamp] as string;
+    return value.slice(0, 10) >= filter[filter.timestamp].on_or_after;
+  }
+  const prop = pg.properties[filter.property];
+  if (filter.select) {
+    const name = prop?.select?.name ?? null;
+    if ('is_empty' in filter.select) return name === null;
+    return name !== null && name !== filter.select.does_not_equal;
+  }
+  if (filter.date) {
+    const start = prop?.date?.start ?? null;
+    if ('is_empty' in filter.date) return start === null;
+    return start !== null && start.slice(0, 10) >= filter.date.on_or_after;
+  }
+  throw new Error(`unexpected filter ${JSON.stringify(filter)}`);
+}
+
+test('R1-25: the list reads every open task, however old, but only recent Done ones', () => {
+  const filter = listFilter(NOW);
+  const pages = {
+    oldOpen: donePage('oldOpen', { status: 'Todo', edited: '2025-01-01T00:00:00.000Z' }),
+    oldDoing: donePage('oldDoing', { status: 'Doing', edited: '2025-01-01T00:00:00.000Z' }),
+    noStatus: donePage('noStatus', { status: null, edited: '2025-01-01T00:00:00.000Z' }),
+    unknownStatus: donePage('unknownStatus', { status: 'Cancelled', edited: '2025-01-01T00:00:00.000Z' }),
+    doneLastWeek: donePage('doneLastWeek', { completed: daysAgo(7), edited: '2025-01-01T00:00:00.000Z' }),
+    doneLongAgo: donePage('doneLongAgo', { completed: '2025-06-01' }),
+    doneInNotionRecently: donePage('doneInNotionRecently', { edited: '2026-11-04T12:00:00.000Z' }),
+    doneInNotionInMarch: donePage('doneInNotionInMarch', { edited: '2026-03-10T12:00:00.000Z' }),
+  };
+  const read = Object.entries(pages).filter(([, pg]) => matches(filter, pg)).map(([name]) => name);
+  assert.deepEqual(read, [
+    'oldOpen', 'oldDoing', 'noStatus', 'unknownStatus', 'doneLastWeek', 'doneInNotionRecently',
+  ]);
+  assert.match(JSON.stringify(filter), /"Status"/);
+  assert.match(JSON.stringify(filter), /"Completed"/);
+});
+
+test('R1-25: the list never leaves out a Done task the Done view would show', () => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'Asia/Jerusalem';
+  try {
+    // 00:30 on Saturday in Israel is still Friday in UTC.
+    const late = new Date(Date.parse('2026-11-06T22:30:00Z'));
+    const since = doneSince(late);
+    let shown = 0;
+    for (let d = 0; d <= 30; d += 1) {
+      const day = toISODate(addDays(late, -d));
+      const task = pageToTask(donePage(`d${d}`, { completed: day }))!;
+      if (buildView('done', [task], late).groups.length === 0) continue;
+      shown += 1;
+      assert.ok(day >= since, `${day} is in the Done view, so the list must read it`);
+    }
+    assert.ok(shown >= 14, 'the check covered the whole Done window');
+  } finally {
     if (tz === undefined) delete process.env.TZ;
     else process.env.TZ = tz;
   }

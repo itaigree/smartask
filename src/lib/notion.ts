@@ -1,12 +1,15 @@
 // A named import: the bundler resolves it. (Node's own ESM loader cannot name-
 // import this CommonJS package, which is why unit tests import notion-mapping.ts
-// and never this file.)
+// and notion-errors.ts and never this file.)
 import { Client } from '@notionhq/client';
 import type { NotionConfig } from './config.ts';
 
 export {
-  PROPS, SCHEMA, pageToTask, newTaskToProperties, patchToProperties,
+  PROPS, SCHEMA, pageToTask, newTaskToProperties, patchToProperties, listFilter,
 } from './notion-mapping.ts';
+export {
+  describeNotionError, mayHaveSaved, notionErrorCode, TaskGoneError, UnconfirmedSaveError,
+} from './notion-errors.ts';
 
 /**
  * The Notion client, running in the browser.
@@ -36,7 +39,8 @@ export async function getDataSourceId(client: Client, databaseId: string): Promi
   const first = sources?.[0]?.id;
   if (!first) {
     throw new Error(
-      'That Notion database has no data source. Check the id points at a database, not a page.',
+      'That Notion database has no data source to read. Check the link is to the database ' +
+        'itself, not a page or a linked view of it.',
     );
   }
 
@@ -46,36 +50,4 @@ export async function getDataSourceId(client: Client, databaseId: string): Promi
 
 export function forgetDataSources(): void {
   dataSourceIds.clear();
-}
-
-/**
- * Turn whatever the SDK threw into something worth showing a person.
- * A network failure and a rejected token are different problems.
- */
-export function describeNotionError(error: unknown): string {
-  const err = error as { code?: string; message?: string; name?: string };
-  const message = String(err?.message ?? error);
-
-  if (err?.name === 'BrowserTokenNotAllowedError') {
-    return 'The Notion client refused to use a token in the browser. This is a bug in the app, not your setup.';
-  }
-
-  switch (err?.code) {
-    case 'unauthorized':
-      return 'Notion rejected the token. Check you pasted the Internal Integration Secret in full.';
-    case 'restricted_resource':
-    case 'object_not_found':
-      return 'Notion cannot find that database. Open it in Notion, then ••• → Connections, and add your integration.';
-    case 'rate_limited':
-      return 'Notion is rate limiting (about 3 requests a second). Wait a moment and try again.';
-    case 'validation_error':
-      return `Notion rejected the data: ${message}`;
-    default:
-      break;
-  }
-
-  if (!err?.code || /fetch|network|failed/i.test(message)) {
-    return 'Could not reach Notion. Check your connection and try again.';
-  }
-  return message;
 }

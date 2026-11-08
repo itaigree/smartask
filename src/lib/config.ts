@@ -43,12 +43,26 @@ export function findNotionId(text: string): string | null {
   return null;
 }
 
+/**
+ * A pasted token or API key, cleaned, or null if it cannot be one.
+ *
+ * Phones, right-to-left keyboards especially, slip invisible marks into copied
+ * text: right-to-left and left-to-right marks, zero-width spaces, word joiners.
+ * The browser then refuses to send the value in a header, no request leaves,
+ * and the failure looked like a network problem that no retry could fix.
+ * Tokens and keys never contain them, so they are removed. Anything else that
+ * is not plain printable ASCII (a space, a smart quote, a letter) means the
+ * wrong thing was pasted.
+ */
+export function cleanSecret(raw: string): string | null {
+  const value = String(raw ?? '').replace(/\p{Cf}/gu, '').trim();
+  if (!value || !/^[\x21-\x7e]+$/.test(value)) return null;
+  return value;
+}
+
 /** A token is not validated here — only Notion can do that — but obvious pastes of the wrong thing are caught. */
 export function validateToken(raw: string): string | null {
-  const token = String(raw ?? '').trim();
-  if (!token) return null;
-  if (/\s/.test(token)) return null;
-  return token;
+  return cleanSecret(raw);
 }
 
 /**
@@ -62,7 +76,8 @@ export function loadConfig(): NotionConfig | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<NotionConfig>;
     if (!parsed?.token || !parsed?.databaseId) return null;
-    return { token: parsed.token, databaseId: parsed.databaseId };
+    // A token saved before invisible marks were stripped works from now on.
+    return { token: cleanSecret(parsed.token) ?? parsed.token, databaseId: parsed.databaseId };
   } catch {
     return null;
   }
@@ -122,7 +137,7 @@ export function loadGeminiConfig(): GeminiConfig | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GeminiConfig>;
     if (!parsed?.apiKey || !parsed?.model) return null;
-    return { apiKey: parsed.apiKey, model: parsed.model };
+    return { apiKey: cleanSecret(parsed.apiKey) ?? parsed.apiKey, model: parsed.model };
   } catch {
     return null;
   }
@@ -149,8 +164,8 @@ export function clearGeminiConfig(): void {
 
 /** Google AI Studio keys have no fixed prefix, so only obvious mis-pastes are caught. */
 export function validateApiKey(raw: string): string | null {
-  const key = String(raw ?? '').trim();
-  if (!key || /\s/.test(key) || key.length < 20) return null;
+  const key = cleanSecret(raw);
+  if (!key || key.length < 20) return null;
   return key;
 }
 

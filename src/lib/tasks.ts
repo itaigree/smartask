@@ -4,8 +4,9 @@ import { getCategorizer, type Categorizer, type CategorySignal } from './categor
 import { cached, invalidate, DEFAULT_TTL_MS } from './cache.ts';
 import type { NotionConfig } from './config.ts';
 import {
-  createClient, getDataSourceId,
-  newTaskToProperties, pageToTask, patchToProperties,
+  createClient, getDataSourceId, mayHaveSaved, notionErrorCode,
+  listFilter, newTaskToProperties, pageToTask, patchToProperties,
+  TaskGoneError, UnconfirmedSaveError,
 } from './notion.ts';
 import type { NewTask, Task, TaskPatch } from './types.ts';
 
@@ -16,7 +17,10 @@ import type { NewTask, Task, TaskPatch } from './types.ts';
  */
 
 const PAGE_SIZE = 100;
-/** Enough for a personal backlog; stops a runaway loop against a huge database. */
+/**
+ * Stops a runaway loop against a huge database. The list reads open and
+ * recently done tasks only, so a personal backlog never comes near it.
+ */
 const MAX_PAGES = 20;
 
 export interface CaptureResult {
@@ -42,8 +46,7 @@ export function createTaskRepository(
 
   const dataSource = () => getDataSourceId(client, config.databaseId);
 
-  async function fetchAllTasks(): Promise<Task[]> {
-    const dataSourceId = await dataSource();
+  async function readTasks(dataSourceId: string, filter?: object): Promise<Task[]> {
     const tasks: Task[] = [];
     let cursor: string | undefined;
 
@@ -53,6 +56,7 @@ export function createTaskRepository(
         page_size: PAGE_SIZE,
         start_cursor: cursor,
         sorts: [{ timestamp: 'created_time', direction: 'descending' }],
+        ...(filter ? { filter: filter as never } : {}),
       });
 
       for (const result of response.results) {
@@ -67,12 +71,57 @@ export function createTaskRepository(
     return tasks;
   }
 
+  /**
+   * A database built by hand may lack Completed, or use Notion's own Status
+   * type, which the list filter cannot name. Reading everything, as before,
+   * beats reading nothing; once refused, the filter is not tried again.
+   */
+  let filterRefused = false;
+
+  async function fetchAllTasks(): Promise<Task[]> {
+    const dataSourceId = await dataSource();
+    if (filterRefused) return readTasks(dataSourceId);
+    try {
+      return await readTasks(dataSourceId, listFilter(new Date()));
+    } catch (e) {
+      if (notionErrorCode(e) !== 'validation_error') throw e;
+      filterRefused = true;
+      return readTasks(dataSourceId);
+    }
+  }
+
+  /**
+   * Notion answers "not found" both for a task deleted there and for a
+   * database the integration can no longer see. Asking for the database tells
+   * them apart, so a deleted task is not reported as a missing database.
+   */
+  async function pageIsGone(error: unknown): Promise<boolean> {
+    if (notionErrorCode(error) !== 'object_not_found') return false;
+    try {
+      await client.databases.retrieve({ database_id: config.databaseId });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function createTask(draft: NewTask): Promise<Task> {
     const dataSourceId = await dataSource();
-    const page = await client.pages.create({
-      parent: { type: 'data_source_id', data_source_id: dataSourceId },
-      properties: newTaskToProperties(draft) as never,
-    });
+    // Offline before sending means the request never left (see mayHaveSaved).
+    const offlineBefore = typeof navigator !== 'undefined' && navigator.onLine === false;
+    let page: unknown;
+    try {
+      page = await client.pages.create({
+        parent: { type: 'data_source_id', data_source_id: dataSourceId },
+        properties: newTaskToProperties(draft) as never,
+      });
+    } catch (e) {
+      if (!mayHaveSaved(e, offlineBefore)) throw e;
+      // The answer, not the request, may be what was lost: the task may be in
+      // Notion now. Say so, rather than invite a second Add and a duplicate.
+      invalidate();
+      throw new UnconfirmedSaveError();
+    }
 
     invalidate();
 
@@ -100,10 +149,17 @@ export function createTaskRepository(
         throw new ValidationError('Nothing to update.');
       }
 
-      const page = await client.pages.update({
-        page_id: id,
-        properties: properties as never,
-      });
+      let page: unknown;
+      try {
+        page = await client.pages.update({
+          page_id: id,
+          properties: properties as never,
+        });
+      } catch (e) {
+        if (!(await pageIsGone(e))) throw e;
+        invalidate(); // a cached list would still show it
+        throw new TaskGoneError();
+      }
 
       invalidate();
 
@@ -117,7 +173,12 @@ export function createTaskRepository(
      * is destroyed and it can be restored from Notion itself.
      */
     async archiveTask(id) {
-      await client.pages.update({ page_id: id, in_trash: true } as never);
+      try {
+        await client.pages.update({ page_id: id, in_trash: true } as never);
+      } catch (e) {
+        // Already deleted in Notion: what the user asked for is done.
+        if (!(await pageIsGone(e))) throw e;
+      }
       invalidate();
     },
   };

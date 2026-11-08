@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { maskToken, notionDatabaseUrl } from '../lib/config.ts';
 import { ValidationError } from '../lib/capture.ts';
 import { LocalStoreError, TASKS_KEY } from '../lib/local-store.ts';
-import { describeNotionError } from '../lib/notion.ts';
+import { describeNotionError, UnconfirmedSaveError } from '../lib/notion.ts';
 import type { CategorySignal, RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
 import { categoryList, unseenCategories } from '../lib/categories.ts';
@@ -298,7 +298,10 @@ export default function TaskBoard({
         return task;
       } catch (e) {
         setWriteError({
-          text: `Could not save the task: ${describeError(e)} Your text is still in the box — tap Add to try again.`,
+          // The answer may be what was lost: then the task is saved, and Add would duplicate it.
+          text: e instanceof UnconfirmedSaveError
+            ? e.message
+            : `Could not save the task: ${describeError(e)} Your text is still in the box — tap Add to try again.`,
           add: true,
         });
         return null;

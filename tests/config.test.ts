@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeDatabaseId, validateToken, maskToken, loadConfig, saveConfig,
+  cleanSecret, validateApiKey, loadGeminiConfig,
 } from '../src/lib/config.ts';
 
 test('a database id is pulled out of whatever the user pastes', () => {
@@ -77,4 +78,60 @@ test('R1-3/R2-5: a link whose title ends in a hex character still gives the righ
     '1429989f-e8ac-4eff-bc8f-57f56486db54',
   );
   assert.equal(normalizeId(''), null);
+});
+
+/* R1-49: invisible marks in a pasted token or key. */
+
+const INVISIBLE = {
+  'right-to-left mark': '‏',
+  'left-to-right mark': '‎',
+  'zero-width space': '​',
+  'word joiner': '⁠',
+  'byte-order mark': '﻿',
+  'Arabic letter mark': '؜',
+};
+const TOKEN = 'ntn_4f8b2c1d9e7a6b5c3d2e1f0a9b8c7d6e5f4a3b2c1d0e';
+const KEY = 'AIzaSyD-4f8b2c1d9e7a6b5c3d2e1f0a9b8c7d6';
+
+test('R1-49: invisible marks are removed from a pasted token or key', () => {
+  for (const [name, mark] of Object.entries(INVISIBLE)) {
+    assert.equal(validateToken(`${mark}${TOKEN}${mark}`), TOKEN, `token, ${name} around it`);
+    assert.equal(validateToken(`${TOKEN.slice(0, 10)}${mark}${TOKEN.slice(10)}`), TOKEN, `token, ${name} inside`);
+    assert.equal(validateApiKey(` ${KEY}${mark} `), KEY, `key, ${name}`);
+  }
+});
+
+test('R1-49: what is left can be sent in a header, which the raw paste could not', () => {
+  const pasted = `${TOKEN}‏`;
+  // Node's fetch refuses the same values a browser does.
+  assert.throws(() => new Headers({ authorization: `Bearer ${pasted}` }));
+  assert.doesNotThrow(() => new Headers({ authorization: `Bearer ${validateToken(pasted)}` }));
+});
+
+test('R1-49: a paste with visible characters a token never has is refused', () => {
+  for (const bad of [
+    `“${TOKEN}”`, // smart quotes
+    `${TOKEN} x`, // a no-break space inside
+    `${TOKEN}א`, // a Hebrew letter
+    '‏‎', // nothing but marks
+  ]) {
+    assert.equal(cleanSecret(bad), null, JSON.stringify(bad));
+    assert.equal(validateToken(bad), null, JSON.stringify(bad));
+  }
+  assert.equal(validateApiKey('AIza‏short'), null, 'still too short once cleaned');
+});
+
+test('R1-49: a token or key saved with an invisible mark before this fix works on load', () => {
+  const saved = new Map<string, string>([
+    ['smartask.notion.v1', JSON.stringify({ token: `${TOKEN}‏`, databaseId: 'db' })],
+    ['smartask.gemini.v1', JSON.stringify({ apiKey: `‎${KEY}`, model: 'gemini-x' })],
+  ]);
+  const g = globalThis as { window?: unknown };
+  g.window = { localStorage: { getItem: (k: string) => saved.get(k) ?? null } };
+  try {
+    assert.deepEqual(loadConfig(), { token: TOKEN, databaseId: 'db' });
+    assert.deepEqual(loadGeminiConfig(), { apiKey: KEY, model: 'gemini-x' });
+  } finally {
+    delete g.window;
+  }
 });
