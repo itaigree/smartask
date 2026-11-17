@@ -129,6 +129,27 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-17 — Bug hunt, second pass: the older code.**
+
+Gemini, voice, views, backup, settings and the connect form were re-read, and
+the model list, the voice session and the parser probed with real inputs.
+Three bugs, all fixed:
+
+1. *A recognizer that never answers "done" locked the capture box.* The mic
+   stayed "listening", the box read-only and Add disabled until a reload. The
+   session now ends itself 2.5 seconds after asking, with what was heard.
+2. *The backup download could fail on an iPhone.* Its link was revoked in the
+   same tick as the click; Safari starts the download afterwards. Revoked a
+   minute later now.
+3. *Image models were offered for classification.* `gemini-2.5-flash-image`
+   takes `generateContent` and scored the same as the text model of its name.
+   Image, live, robotics and computer-use models are now left out.
+
+Verified: 282 unit tests; in the built app, a fake recognizer that ignores
+`stop()`, and a backup download in Chromium. **Not verified:** Safari on a
+real iPhone (fixes 1 and 2 are for behaviour reported there, not seen here),
+and Google's real model list.
+
 **2026-11-17 — Bug hunt after Phase 16 (reminders, own categories).**
 
 The new code was read end to end, the parser and the rules were probed with

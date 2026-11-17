@@ -670,3 +670,15 @@ test('the examples reach Gemini on a real classification, and the answer uses th
   assert.equal(signal.category, 'Pets');
   assert.equal(signal.created, undefined, 'an existing category is not reported as new');
 });
+
+test('models for pictures, live audio or driving a computer are not offered', () => {
+  for (const id of [
+    'gemini-2.5-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview',
+    'nano-banana-pro-preview', 'gemini-2.5-flash-live-preview',
+    'gemini-2.5-computer-use-preview-10-2025', 'gemini-robotics-er-1.5-preview',
+  ]) {
+    assert.ok(scoreModel(id) < 0, `${id} is not a text model for this job`);
+  }
+  assert.ok(scoreModel('gemini-2.5-flash') > 0);
+  assert.ok(scoreModel('gemini-2.5-flash-lite') > 0);
+});

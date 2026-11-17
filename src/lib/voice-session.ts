@@ -36,6 +36,12 @@ export interface VoiceSessionOptions {
    * the times Android keeps listening after the user has stopped.
    */
   silenceMs?: number;
+  /**
+   * How long the recognizer gets to answer a request to finish. It normally
+   * replies at once with a final result or an end; one that never does (seen
+   * on iPhones) would leave the mic "listening" and the box locked for good.
+   */
+  finishMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
@@ -48,6 +54,7 @@ export interface VoiceSession {
 }
 
 export const DEFAULT_SILENCE_MS = 2000;
+export const DEFAULT_FINISH_MS = 2500;
 
 export function startVoiceSession(
   recognition: SpeechRecognitionLike,
@@ -57,11 +64,14 @@ export function startVoiceSession(
 ): VoiceSession {
   const {
     silenceMs = DEFAULT_SILENCE_MS,
+    finishMs = DEFAULT_FINISH_MS,
     setTimer = (fn, ms) => setTimeout(fn, ms),
     clearTimer = (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   } = options;
 
   let closed = false;
+  /** Asked to finish; from here the only timer is the wait for its answer. */
+  let finishing = false;
   let lastText = '';
   let silence: unknown = null;
 
@@ -88,11 +98,15 @@ export function startVoiceSession(
   function requestFinish() {
     if (closed) return;
     stopTimer();
+    finishing = true;
     try {
       recognition.stop();
     } catch {
       close(lastText);
+      return;
     }
+    // No final result and no end within the wait: end it here, with what was heard.
+    silence = setTimer(() => close(lastText), finishMs);
   }
 
   recognition.lang = lang;
@@ -109,6 +123,7 @@ export function startVoiceSession(
       close(text);
       return;
     }
+    if (finishing) return; // the wait for the recognizer's answer is running
     // Words are still arriving: push the backstop out again.
     stopTimer();
     silence = setTimer(requestFinish, silenceMs);
