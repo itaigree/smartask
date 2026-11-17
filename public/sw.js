@@ -20,8 +20,12 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      // Only this app's own windows. Every window of the origin is listed, and
+      // on a shared one (<user>.github.io) that includes other sites: the tap
+      // brought one of those to the front instead of SmartTask.
+      const scope = self.registration.scope;
       for (const client of windows) {
-        if ('focus' in client) return client.focus();
+        if (client.url.startsWith(scope) && 'focus' in client) return client.focus();
       }
       return self.clients.openWindow(url);
     })(),

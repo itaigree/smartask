@@ -15,7 +15,7 @@ import {
 import type { Task } from '../lib/types.ts';
 import { classifyWithGemini, createGeminiCategorizer } from '../lib/categorize/gemini.ts';
 import {
-  forgetDeviceSettings, forgetPendingDraft, forgetQuestion, leftBehind,
+  forgetDeviceSettings, forgetPendingDraft, forgetQuestion, forgetReminderRecord, leftBehind,
 } from '../lib/forget.ts';
 import {
   countLocalTasks, createLocalRepository, requestPersistentStorage,
@@ -171,6 +171,10 @@ export default function App() {
    */
   function leave() {
     forgetPendingDraft();
+    forgetReminderRecord();
+    // The task titles Gemini is shown belong to the store being left: a task
+    // added to the next one before its list loads must not send them along.
+    examplesRef.current = new Map();
     if (mode === 'notion') {
       clearConfig();
       setConfig(null);

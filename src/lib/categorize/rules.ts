@@ -125,6 +125,23 @@ export function categoryNamedByTags(
 const HEBREW_PREFIX = '[הבלמשוכ]{0,2}';
 
 /**
+ * Words in nearly every sentence. One of these in a task says nothing about
+ * where it belongs: with a category called "IT", "fix it now" was filed there,
+ * and so was every other task with "it" in it.
+ */
+const EVERYDAY_WORDS = new Set([
+  'a', 'an', 'the', 'it', 'its', 'us', 'we', 'me', 'my', 'he', 'she', 'you', 'is', 'am', 'are',
+  'be', 'do', 'go', 'to', 'of', 'in', 'on', 'at', 'by', 'as', 'or', 'so', 'no', 'if', 'up',
+  'all', 'and', 'for', 'not', 'now', 'new', 'out', 'other', 'more', 'next', 'later',
+]);
+
+/**
+ * Words that look like the singular of a category name and are not: "new" is
+ * not one of the "News", and "buy a new phone" was filed under it.
+ */
+const NOT_A_SINGULAR = new Set(['good', 'need', 'want', 'mean', 'thank', 'custom', 'look']);
+
+/**
  * How a category name may be spelled inside a task: the name itself, with a
  * plain English plural added or dropped ("Car" for "cars", "Pets" for "pet").
  */
@@ -133,10 +150,16 @@ function nameForms(name: string): string[] {
   const forms = new Set([key]);
   if (/[a-z]$/.test(key)) {
     if (!key.endsWith('s')) forms.add(`${key}s`);
-    else if (key.length > 3 && !key.endsWith('ss')) forms.add(key.slice(0, -1));
+    else if (key.length > 3 && !key.endsWith('ss')) {
+      const singular = key.slice(0, -1);
+      if (!EVERYDAY_WORDS.has(singular) && !NOT_A_SINGULAR.has(singular)) forms.add(singular);
+    }
   }
   return [...forms];
 }
+
+/** Links name whatever their address happens to hold, not what the task is about. */
+const LINK = /(?:https?:\/\/|www\.)\S+/gi;
 
 /**
  * The category of the user's own that the task text names, or null: "Car" for
@@ -146,6 +169,11 @@ function nameForms(name: string): string[] {
  * its name in a task is deliberate evidence; the built-ins are everyday words
  * ("work out", "home page") and are matched by the keyword lists instead.
  * The longest name wins, so "Car Insurance" is not read as "Car".
+ *
+ * A name that is an everyday word ("IT", "US") only counts written in capitals
+ * as the category is — "ask IT for a laptop", not "fix it now" — so pass the
+ * text as it was typed. One that is no acronym ("Other") is never named by the
+ * text; a tag still names it.
  */
 export function categoryNamedInText(
   text: string,
@@ -156,15 +184,21 @@ export function categoryNamedInText(
     .filter((name): name is string => name !== null && !isBuiltInCategory(name))
     .sort((a, b) => b.length - a.length);
 
-  const haystack = text.normalize('NFC');
+  const haystack = text.normalize('NFC').replace(LINK, ' ');
   for (const name of own) {
+    const key = categoryKey(name);
     // A one-letter name would match far too much to mean anything.
-    if (categoryKey(name).replace(/[^\p{L}\p{N}]/gu, '').length < 2) continue;
-    const forms = nameForms(name)
+    if (key.replace(/[^\p{L}\p{N}]/gu, '').length < 2) continue;
+    const everyday = EVERYDAY_WORDS.has(key);
+    if (everyday && (name !== name.toUpperCase() || name === name.toLowerCase())) continue;
+    const forms = (everyday ? [name] : nameForms(name))
       .map((form) => form.split(/[\s\-_]+/).map(escapeRegExp).join('[\\s\\-_]+'))
       .join('|');
     const prefix = /^\p{Script=Hebrew}/u.test(name) ? HEBREW_PREFIX : '';
-    const re = new RegExp(`(?<![\\p{L}\\p{N}])${prefix}(?:${forms})(?![\\p{L}\\p{N}])`, 'iu');
+    const re = new RegExp(
+      `(?<![\\p{L}\\p{N}])${prefix}(?:${forms})(?![\\p{L}\\p{N}])`,
+      everyday ? 'u' : 'iu',
+    );
     if (re.test(haystack)) return name;
   }
   return null;
@@ -201,14 +235,14 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
     return { category: taggedCategory, confidence: 1, reason: 'named by a tag', source: 'rules' };
   }
 
-  const haystack = [input.title, input.note ?? '', ...(input.tags ?? [])]
-    .join(' ')
-    .toLowerCase();
+  const text = [input.title, input.note ?? '', ...(input.tags ?? [])].join(' ');
+  const haystack = text.toLowerCase();
 
   // A category the user made, named in the task itself, is more specific than
   // any built-in the keywords could reach: "renew the car insurance" belongs
   // in their Car, not in Finance.
-  const named = categoryNamedInText(haystack, input.categories);
+  // Given the text as typed: an acronym category is matched by its capitals.
+  const named = categoryNamedInText(text, input.categories);
   if (named) {
     return { category: named, confidence: 0.8, reason: 'mentions your category', source: 'rules' };
   }

@@ -56,9 +56,13 @@ export default function ReminderPicker({
    * Set the reminder. The permission question is asked here, on the tap that
    * sets the first reminder — the moment it makes sense — and whatever the
    * answer, the reminder is saved: it still shows inside the app.
+   *
+   * The answer is not waited for. A browser may never give one — Chrome's
+   * quiet prompt and Firefox's dismissed one leave the question open — and
+   * the sheet then sat there with the reminder unsaved.
    */
-  async function pick(at: Date) {
-    await askToNotify();
+  function pick(at: Date) {
+    void askToNotify();
     onPick(at.toISOString());
   }
 
@@ -73,7 +77,7 @@ export default function ReminderPicker({
       setProblem('That time has already passed.');
       return;
     }
-    void pick(at);
+    pick(at);
   }
 
   // A link the browser saves as a .ics file; opening it adds the event, with
@@ -114,7 +118,7 @@ export default function ReminderPicker({
             key={preset.key}
             type="button"
             className="option"
-            onClick={() => void pick(preset.at)}
+            onClick={() => pick(preset.at)}
           >
             <span>{preset.label}</span>
             <span className="option-time">{reminderLabel(preset.at.toISOString(), now)}</span>

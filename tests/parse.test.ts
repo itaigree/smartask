@@ -356,3 +356,13 @@ test('a dotted date with a year is a date even after an English word', () => {
   assert.equal(parseTask('renew 25.12.27', NOW).due, '2027-12-25');
   assert.equal(parseTask('update library 1.12.10', NOW).due, null, 'a past year is a version');
 });
+
+test('"this friday" is the date, and "this" leaves the title with it', () => {
+  const d = parseTask('send the report this friday', NOW);
+  assert.equal(d.title, 'send the report');
+  assert.equal(d.due, iso(2));
+  assert.equal(parseTask('review by this coming monday', NOW).title, 'review');
+  assert.equal(parseTask('review by this coming monday', NOW).due, iso(5));
+  // "this" with no day after it is an ordinary word.
+  assert.equal(parseTask('fix this bug', NOW).title, 'fix this bug');
+});

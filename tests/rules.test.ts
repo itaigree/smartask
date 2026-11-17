@@ -158,3 +158,27 @@ test('the longest category named wins, and a tag still beats the text', () => {
     'Pets',
   );
 });
+
+test('an everyday word in a task does not name a category', () => {
+  const categories = ['IT', 'US', 'Other', 'News', 'Goods'];
+  // "it" is in nearly every sentence; the IT category is named in capitals.
+  assert.equal(categoryNamedInText('fix it now', categories), null);
+  assert.equal(categoryNamedInText('ask IT for a laptop', categories), 'IT');
+  assert.equal(categoryNamedInText('call us back', categories), null);
+  assert.equal(categoryNamedInText('the other dentist', categories), null);
+  // "new" is not one of the News, nor "good" one of the Goods.
+  assert.equal(categoryNamedInText('buy a new phone', categories), null);
+  assert.equal(categoryNamedInText('good morning call', categories), null);
+  assert.equal(categoryNamedInText('read the news', categories), 'News');
+  // Through the rules, as typed — and a tag still names any of them.
+  assert.equal(categorizeByRules({ title: 'Ask IT for a laptop', categories }).category, 'IT');
+  assert.notEqual(categorizeByRules({ title: 'fix it now', categories }).category, 'IT');
+  assert.equal(categorizeByRules({ title: 'fix it now', tags: ['it'], categories }).category, 'IT');
+});
+
+test('a category name inside a link does not file the task there', () => {
+  const categories = ['Car'];
+  assert.equal(categoryNamedInText('read https://example.com/car/123', categories), null);
+  assert.equal(categoryNamedInText('see www.car.com', categories), null);
+  assert.equal(categoryNamedInText('car ad at https://example.com/x', categories), 'Car');
+});

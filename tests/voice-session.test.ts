@@ -264,3 +264,33 @@ test('R1-47: the app\'s own cancel never shows the cut-off message', () => {
   r.fail('aborted'); // what abort() makes the browser send
   assert.deepEqual(log.errors, []);
 });
+
+test('a recognizer that never answers "done" is ended anyway, with what was heard', () => {
+  const r = fakeRecognizer();
+  const { log, callbacks } = recorder();
+  const clock = fakeClock();
+  const session = startVoiceSession(r, 'en-US', callbacks, { ...clock, finishMs: 2500 });
+  r.say('buy milk');
+  session.finish();
+  // No final result, no end: the mic used to stay "listening" and the box locked.
+  clock.advance(2400);
+  assert.equal(log.ends, 0, 'it is given a moment to answer');
+  r.say('buy milk and'); // a late interim word must not restart the wait
+  clock.advance(100);
+  assert.deepEqual(log.final, ['buy milk and']);
+  assert.equal(log.ends, 1);
+  assert.equal(r.stopped, 1, 'asked to stop once');
+  r.end();
+  assert.equal(log.ends, 1, 'a late end changes nothing');
+});
+
+test('nothing heard and no answer to "done": the mic still closes, adding nothing', () => {
+  const r = fakeRecognizer();
+  const { log, callbacks } = recorder();
+  const clock = fakeClock();
+  const session = startVoiceSession(r, 'en-US', callbacks, clock);
+  session.finish();
+  clock.advance(2500);
+  assert.deepEqual(log.final, []);
+  assert.equal(log.ends, 1);
+});

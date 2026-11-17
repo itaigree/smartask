@@ -32,7 +32,9 @@ export default function LocalBackup({ onRestored }: { onRestored: () => void }) 
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    // Not at once: Safari starts the download after this returns, and a link
+    // already revoked gave an iPhone no backup file at all.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
     setNote({ ok: true, text: 'Backup downloaded. Keep it somewhere other than this phone.' });
   }
 

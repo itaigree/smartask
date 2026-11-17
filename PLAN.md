@@ -129,6 +129,63 @@ Later phases must not violate these:
 
 ## Status log
 
+**2026-11-17 — Bug hunt, second pass: the older code.**
+
+Gemini, voice, views, backup, settings and the connect form were re-read, and
+the model list, the voice session and the parser probed with real inputs.
+Three bugs, all fixed:
+
+1. *A recognizer that never answers "done" locked the capture box.* The mic
+   stayed "listening", the box read-only and Add disabled until a reload. The
+   session now ends itself 2.5 seconds after asking, with what was heard.
+2. *The backup download could fail on an iPhone.* Its link was revoked in the
+   same tick as the click; Safari starts the download afterwards. Revoked a
+   minute later now.
+3. *Image models were offered for classification.* `gemini-2.5-flash-image`
+   takes `generateContent` and scored the same as the text model of its name.
+   Image, live, robotics and computer-use models are now left out.
+
+Verified: 282 unit tests; in the built app, a fake recognizer that ignores
+`stop()`, and a backup download in Chromium. **Not verified:** Safari on a
+real iPhone (fixes 1 and 2 are for behaviour reported there, not seen here),
+and Google's real model list.
+
+**2026-11-17 — Bug hunt after Phase 16 (reminders, own categories).**
+
+The new code was read end to end, the parser and the rules were probed with
+batches of real inputs, and the built app was driven in a phone-sized browser
+with the clock controlled and Notion replaced by a fake. Seven bugs, all fixed:
+
+1. *Setting a reminder waited for the notification prompt.* A browser may
+   never answer it (Chrome's quiet prompt, a dismissed one in Firefox): the
+   sheet stayed open and the reminder was not saved. The question is now asked
+   without waiting.
+2. *A completed task's reminder rang again when the task was reopened*, about
+   a time long gone — the README says completing answers it. Reopening now
+   drops a reminder whose time has passed; a tick undone at once keeps it.
+3. *A tap on a notification could bring another site to the front.* The
+   worker focused the first window of the origin, which on `<user>.github.io`
+   includes other project sites. Only windows under its own scope now.
+4. *Everyday words named categories.* With an "IT" category, "fix it now" was
+   filed there; with "News", "buy a new phone". An everyday word names a
+   category only in capitals, and "new" is no singular of "News". A name
+   inside a link no longer counts either.
+5. *"this friday" left "this" in the title.*
+6. *⏻ left behind* the record of notified reminders (task ids), and the task
+   titles shown to Gemini — a task added to the next store before its list
+   loaded would have sent them along.
+7. *A reminder read from Notion just after its time* waited up to a minute to
+   ring: the wake-up timer counted from the instant, the banner from the
+   board's last look at the clock.
+
+Verified: 279 unit tests; in the built app, each fix; and an old Notion
+database (faked) getting its Reminder property on the first reminder. **Not
+verified:** a real notification on a real phone, real Notion, real Gemini.
+
+Found and left alone: Hebrew dates and "this weekend" / "end of month" are
+still not read by the local parser (Gemini reads Hebrew ones); "every monday"
+sets the date and leaves "every" in the title — there are no recurring tasks.
+
 **2026-11-17 — Phase 16: reminders; categories are gone through first.**
 
 *Reminders.* Each task has one optional `reminder`, an instant in UTC, set

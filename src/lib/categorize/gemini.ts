@@ -592,7 +592,11 @@ export function scoreModel(name: string): number {
   const id = name.toLowerCase();
 
   // Wrong modality or job entirely.
-  if (/embedding|aqa|imagen|image-generation|tts|audio|video|veo|learnlm/.test(id)) return -1;
+  // Image models take generateContent too ("gemini-2.5-flash-image"), and
+  // scored the same as the text model of their name.
+  if (/embedding|aqa|image|banana|tts|audio|video|veo|learnlm|live|robotics|computer-use/.test(id)) {
+    return -1;
+  }
 
   let score = 0;
   if (id.includes('flash')) score += 100; // cheapest and fastest family
