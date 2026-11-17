@@ -10,8 +10,9 @@ import {
   getCategorizer, withCategories, type Categorizer, type CategorySignal,
 } from '../lib/categorize/index.ts';
 import {
-  categoryList, loadCustomCategories, saveCustomCategories,
+  categoryExamples, categoryList, loadCustomCategories, saveCustomCategories,
 } from '../lib/categories.ts';
+import type { Task } from '../lib/types.ts';
 import { classifyWithGemini, createGeminiCategorizer } from '../lib/categorize/gemini.ts';
 import {
   forgetDeviceSettings, forgetPendingDraft, forgetQuestion, leftBehind,
@@ -68,6 +69,14 @@ export default function App() {
     () => categoryList([...categoriesRef.current, ...createdRef.current]),
     [],
   );
+  // What each of the user's own categories already holds: a few task titles,
+  // kept up to date by the board. Gemini is shown them when it goes through
+  // the categories, so "Pets" means the tasks in it and not just the word.
+  const examplesRef = useRef<ReadonlyMap<string, readonly string[]>>(new Map());
+  const noteTasks = useCallback((tasks: readonly Task[]) => {
+    examplesRef.current = categoryExamples(tasks);
+  }, []);
+
   const rememberCreated = useCallback((signal: CategorySignal) => {
     if (signal.created && !createdRef.current.includes(signal.category)) {
       createdRef.current = [...createdRef.current, signal.category];
@@ -105,7 +114,8 @@ export default function App() {
     const ai = createGeminiCategorizer(gemini, rules, undefined, offeredCategories);
     return {
       name: ai.name,
-      categorize: async (input) => rememberCreated(await ai.categorize(input)),
+      categorize: async (input) =>
+        rememberCreated(await ai.categorize({ ...input, examples: examplesRef.current })),
     };
   }, [gemini, offeredCategories, rememberCreated]);
 
@@ -114,7 +124,13 @@ export default function App() {
     () =>
       gemini
         ? async (input: Parameters<typeof classifyWithGemini>[1]) =>
-            rememberCreated(await classifyWithGemini(gemini, input, offeredCategories()))
+            rememberCreated(
+              await classifyWithGemini(
+                gemini,
+                { ...input, examples: examplesRef.current },
+                offeredCategories(),
+              ),
+            )
         : null,
     [gemini, offeredCategories, rememberCreated],
   );
@@ -227,6 +243,7 @@ export default function App() {
           onOpenAi={() => setShowAi(true)}
           customCategories={customCategories}
           onCustomCategoriesChange={setCustomCategories}
+          onTasksChange={noteTasks}
         />
         {mode === 'notion' ? (
           <p className="footer">

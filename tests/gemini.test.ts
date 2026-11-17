@@ -299,7 +299,8 @@ test('a bare-word reply carries no extraction, rather than inventing one', () =>
 test('the prompt lists the user\'s categories and asks for the best fit before a new one', () => {
   const prompt = buildPrompt({ title: 'להאכיל את החתול' }, [...CATEGORIES, 'Research'], { allowNew: true });
   assert.match(prompt, /- Research: the user's own category/);
-  assert.match(prompt, /pick the one that fits the\s+task best/);
+  assert.match(prompt, /Go through every one of the user's current categories/);
+  assert.match(prompt, /pick the one that fits the task best/);
   assert.match(prompt, /Only if none of them fits, create a new category/);
   assert.match(prompt, /Never create a category\s+that means the same as an existing one/);
   assert.match(prompt, /"new": <true or false>/);
@@ -632,4 +633,40 @@ test('R1-23: a saved model Google no longer lists stays selectable as "unavailab
   assert.deepEqual(modelChoices(models, 'gemini-2.5-flash'), models);
   assert.deepEqual(modelChoices([], 'gemini-2.5-flash'), [{ id: 'gemini-2.5-flash', label: 'gemini-2.5-flash' }],
     'before the list is read, just the current one');
+});
+
+/* ---- Going through the user's categories: what each one already holds ---- */
+
+test('the prompt shows tasks already in each of the user\'s own categories', () => {
+  const examples = new Map([['pets', ['feed the cat', 'vet "check-up"']]]);
+  const prompt = buildPrompt(
+    { title: 'buy a scratching post', examples },
+    [...CATEGORIES, 'Pets', 'Research'],
+    { allowNew: true },
+  );
+  assert.match(prompt, /- Pets: the user's own category .*Tasks already in it: "feed the cat", "vet \\"check-up\\""/);
+  assert.match(prompt, /a task of the same kind belongs there too/);
+  // A category with no tasks yet is still offered, by name alone.
+  assert.match(prompt, /- Research: the user's own category — use it whenever the task clearly fits it\n/);
+  // Built-ins keep their own description; they get no examples.
+  assert.match(prompt, /- Finance: money: bills/);
+});
+
+test('the examples reach Gemini on a real classification, and the answer uses the existing category', async () => {
+  let sent = '';
+  const signal = await withFetch(
+    (async (_url: unknown, init?: RequestInit) => {
+      sent = JSON.parse(String(init?.body)).contents[0].parts[0].text;
+      return jsonResponse(reply('{"category":"Pets","new":false,"due":null,"title":"buy a scratching post"}'));
+    }) as typeof fetch,
+    () =>
+      classifyWithGemini(
+        { apiKey: 'k'.repeat(30), model: 'gemini-flash' },
+        { title: 'buy a scratching post', examples: new Map([['pets', ['feed the cat']]]) },
+        [...CATEGORIES, 'Pets'],
+      ),
+  );
+  assert.match(sent, /Tasks already in it: "feed the cat"/);
+  assert.equal(signal.category, 'Pets');
+  assert.equal(signal.created, undefined, 'an existing category is not reported as new');
 });

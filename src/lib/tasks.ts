@@ -6,7 +6,7 @@ import type { NotionConfig } from './config.ts';
 import {
   createClient, getDataSourceId, mayHaveSaved, notionErrorCode,
   listFilter, newTaskToProperties, pageToTask, patchToProperties,
-  TaskGoneError, UnconfirmedSaveError,
+  OPTIONAL_SCHEMA, PROPS, ReminderSetupError, TaskGoneError, UnconfirmedSaveError,
 } from './notion.ts';
 import type { NewTask, Task, TaskPatch } from './types.ts';
 
@@ -105,6 +105,68 @@ export function createTaskRepository(
     }
   }
 
+  /**
+   * Whether the database has the Reminder property; true is remembered. One
+   * of another type (a "Reminder" checkbox someone added) cannot hold a time,
+   * and Notion's own refusal would not say which property is wrong.
+   */
+  let reminderReady = false;
+
+  async function hasReminderProperty(): Promise<boolean> {
+    if (reminderReady) return true;
+    const source = await client.dataSources.retrieve({ data_source_id: await dataSource() });
+    const found = (source as { properties?: Record<string, { type?: string }> })
+      .properties?.[PROPS.reminder];
+    if (!found) return false;
+    if (found.type !== 'date') {
+      throw new ReminderSetupError(
+        `Your Notion database has a "${PROPS.reminder}" property that is not a Date, so it cannot hold a reminder.`,
+      );
+    }
+    reminderReady = true;
+    return true;
+  }
+
+  /** A database made before reminders existed gets the property the first time one is set. */
+  async function addReminderProperty(): Promise<void> {
+    try {
+      await client.dataSources.update({
+        data_source_id: await dataSource(),
+        properties: OPTIONAL_SCHEMA as never,
+      });
+      reminderReady = true;
+    } catch (e) {
+      // Not a database problem: let "no connection" or "bad token" say so itself.
+      const code = notionErrorCode(e);
+      if (code !== 'validation_error' && code !== 'restricted_resource') throw e;
+      throw new ReminderSetupError('The app could not add the reminder property to your Notion database.');
+    }
+  }
+
+  /**
+   * Send a page update. If Notion refuses it because the database has no
+   * Reminder property yet, add the property and send again — or, when the
+   * change only clears a reminder, send the rest: there is nothing to clear.
+   */
+  async function sendUpdate(id: string, properties: Record<string, unknown>): Promise<unknown> {
+    const send = (props: Record<string, unknown>) =>
+      client.pages.update({ page_id: id, properties: props as never });
+    try {
+      return await send(properties);
+    } catch (e) {
+      const reminder = properties[PROPS.reminder] as { date: unknown } | undefined;
+      if (!reminder || notionErrorCode(e) !== 'validation_error') throw e;
+      if (await hasReminderProperty()) throw e; // refused for some other reason
+
+      if (reminder.date) {
+        await addReminderProperty();
+        return send(properties);
+      }
+      const { [PROPS.reminder]: _nothingToClear, ...rest } = properties;
+      return Object.keys(rest).length ? send(rest) : client.pages.retrieve({ page_id: id });
+    }
+  }
+
   async function createTask(draft: NewTask): Promise<Task> {
     const dataSourceId = await dataSource();
     // Offline before sending means the request never left (see mayHaveSaved).
@@ -151,10 +213,7 @@ export function createTaskRepository(
 
       let page: unknown;
       try {
-        page = await client.pages.update({
-          page_id: id,
-          properties: properties as never,
-        });
+        page = await sendUpdate(id, properties);
       } catch (e) {
         if (!(await pageIsGone(e))) throw e;
         invalidate(); // a cached list would still show it

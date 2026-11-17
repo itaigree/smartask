@@ -1,17 +1,13 @@
 'use client';
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { isCustomCategory } from '../lib/categories.ts';
 import { MAX_CATEGORY_LENGTH, normalizeCategoryName, type Category, type Task } from '../lib/types.ts';
 import { CategoryChip } from './Chips.tsx';
-import { useCloseOnBack } from './useCloseOnBack.ts';
+import Sheet from './Sheet.tsx';
 
 /**
- * A sheet that slides up from the bottom — the natural reach on a phone — to
- * move one task to another category, or to a brand-new one.
- *
- * It is a real modal `<dialog>`: while it is open, Tab and screen readers stay
- * inside it, and the board behind cannot be reached.
+ * The sheet for moving one task to another category, or to a brand-new one.
  */
 export default function CategoryPicker({
   task,
@@ -33,50 +29,6 @@ export default function CategoryPicker({
 }) {
   const [draft, setDraft] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
-  const sheetRef = useRef<HTMLDialogElement>(null);
-
-  // Android's back gesture closes the sheet, not the app.
-  useCloseOnBack(true, onClose);
-
-  // Runs once, when the sheet opens — not again on later renders. The board
-  // re-renders all the time (the minute tick, a finished save, each step of a
-  // sort), and focusing the sheet then would pull focus out of the "New
-  // category" field and close the phone's keyboard.
-  const taskId = task.id;
-  useLayoutEffect(() => {
-    const sheet = sheetRef.current!;
-    const opener = document.activeElement;
-    sheet.showModal();
-    sheet.focus();
-    return () => {
-      if (sheet.open) sheet.close();
-      // Focus goes back to the chip that opened the sheet. If moving the task
-      // re-drew its card in another group, that chip is gone: use the new one.
-      setTimeout(() => {
-        const active = document.activeElement;
-        if (active && active !== document.body) return;
-        const chip =
-          opener instanceof HTMLElement && opener.isConnected
-            ? opener
-            : document.querySelector<HTMLElement>(
-                `[data-task-id="${CSS.escape(taskId)}"] .chip.editable`,
-              );
-        chip?.focus();
-      });
-    };
-  }, []);
-
-  /** A tap on the dimmed area: it belongs to the dialog, but lies outside its box. */
-  function onBackdrop(event: React.MouseEvent<HTMLDialogElement>) {
-    if (event.target !== event.currentTarget) return;
-    const box = event.currentTarget.getBoundingClientRect();
-    const inside =
-      event.clientX >= box.left &&
-      event.clientX <= box.right &&
-      event.clientY >= box.top &&
-      event.clientY <= box.bottom;
-    if (!inside) onClose();
-  }
 
   function create(event: React.FormEvent) {
     event.preventDefault();
@@ -95,29 +47,13 @@ export default function CategoryPicker({
   }
 
   return (
-    <dialog
-      className="sheet"
-      aria-label="Change category"
-      tabIndex={-1}
-      ref={sheetRef}
-      onClick={onBackdrop}
-      // Escape, or the back gesture where the browser hands it to the dialog.
-      // The board decides when the sheet goes, so the browser's own close waits.
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
+    <Sheet
+      label="Change category"
+      heading="Move to…"
+      taskTitle={task.title}
+      returnFocusTo={`[data-task-id="${CSS.escape(task.id)}"] .chip.category.editable`}
+      onClose={onClose}
     >
-      <div className="panel-head">
-        <h2>Move to…</h2>
-        <button type="button" className="icon-button" onClick={onClose}>
-          cancel
-        </button>
-      </div>
-      <p className="sheet-task" dir="auto">
-        {task.title}
-      </p>
-
       <div className="category-options">
         {categories.map((category) => {
           const current = category === task.category;
@@ -170,6 +106,6 @@ export default function CategoryPicker({
           {problem}
         </p>
       )}
-    </dialog>
+    </Sheet>
   );
 }

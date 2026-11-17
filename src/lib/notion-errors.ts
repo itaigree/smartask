@@ -26,6 +26,20 @@ export class UnconfirmedSaveError extends Error {
   }
 }
 
+/**
+ * The database has no usable `Reminder` property and the app could not add
+ * one. The message is complete as it stands, with the fix by hand.
+ */
+export class ReminderSetupError extends Error {
+  constructor(detail: string) {
+    super(
+      `${detail} In Notion, give the tasks database a property named "Reminder" of type Date, ` +
+        'then set the reminder again.',
+    );
+    this.name = 'ReminderSetupError';
+  }
+}
+
 interface ErrorLike {
   code?: unknown;
   message?: unknown;
@@ -81,6 +95,8 @@ export function mayHaveSaved(error: unknown, offlineBefore: boolean): boolean {
  */
 export function describeNotionError(error: unknown): string {
   const message = messageOf(error);
+
+  if (error instanceof ReminderSetupError) return message;
 
   if ((error as ErrorLike | null)?.name === 'BrowserTokenNotAllowedError') {
     return 'The Notion client refused to use a token in the browser. This is a bug in the app, not your setup.';

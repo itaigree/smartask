@@ -100,8 +100,14 @@ Later phases must not violate these:
 6b. **Nothing may require a server.** No API routes, no server-side data
    fetching, no dynamic functions — `next build` must produce a clean static
    export or the deploy breaks.
-7. **Out of v1 scope:** recurring tasks, notifications, multi-user, Notion->app
-   webhooks, offline mode.
+7. **Out of v1 scope:** recurring tasks, ~~notifications~~ (reminders added
+   2026-11-17, see Status log), multi-user, Notion->app webhooks, offline mode.
+8. **The service worker (`public/sw.js`) has no `fetch` handler and caches
+   nothing.** It exists only so Android can show a reminder notification. A
+   caching worker could serve a stale app after a deploy.
+9. **`Reminder` is an optional Notion property.** It is never sent unless a
+   reminder is being set or removed, and it stays out of `SCHEMA`, so a database
+   made before reminders existed keeps working and still passes `check:notion`.
 
 ## Phases
 - [x] Phase 1: Scaffold & Notion schema — Next.js project boots, `npm run setup:notion` creates the database in Notion, `.env.example` documented — Done when: `npm run dev` serves a page and the setup script prints a database id that is visible in Notion.
@@ -118,9 +124,70 @@ Later phases must not violate these:
 - [x] Phase 13: Voice input — browser speech recognition, Hebrew or English, transcript into the capture box for review — Done when: speaking a task fills the box and Add saves it; where the browser cannot, the user is pointed at the keyboard's dictation key.
 - [x] Phase 14: Phone-only mode — tasks kept in the browser with no account; Notion becomes optional; backup and restore — Done when: a new user can choose "On this phone only" and use every feature with zero Notion requests, and a user with saved Notion credentials sees no change.
 - [x] Phase 15: Editable and custom categories — tap a task's category to move it, or create a new category — Done when: a new category is applied, survives a reload in both stores, gets its own group in All, and Gemini can file into it.
+- [x] Phase 16: Reminders, and categories gone through first — one optional reminder per task, stored with the task; the rules check the user's own categories; Gemini sees what each holds — Done when: a reminder set on a task shows on it, rings at its time with the app open, is still waiting after a reload, and round-trips through both stores; and with AI off a task naming one of the user's categories is filed there.
 - [x] Phase 8: AI categorizer — `categorize/gemini.ts` behind a user-supplied Google AI Studio key — Done when: with a key set, free-text tasks get categories the rules miss, and with no key the app still works. **Built with Gemini rather than Claude at the user's request; the `Categorizer` seam took it unchanged.**
 
 ## Status log
+
+**2026-11-17 — Phase 16: reminders; categories are gone through first.**
+
+*Reminders.* Each task has one optional `reminder`, an instant in UTC, set
+from a 🔔 on its card (`ReminderPicker.tsx`): one-tap times, or any date and
+time. It is stored on the task — a `Reminder` date property in Notion, a field
+in phone-only storage and its backups.
+
+- **A reminder stays until it is answered.** Past its time it "rings": the
+  task is listed at the top with Later / Got it, and its chip is highlighted.
+  Nothing marks it as fired in the store, so one that came due while the app
+  was closed is still there on opening. Done tasks never ring.
+- **Notifications are best-effort, and the app says so.** With no server
+  (decision 6b) nothing can wake a closed app. The board sets a timer for the
+  next reminder and re-checks the clock on returning to the app; when one
+  comes due it shows a notification through a service worker (Android refuses
+  any other way). Each device notifies once per reminder
+  (`smartask.reminders.announced.v1`); a reminder found already overdue with
+  the app on screen is shown in the banner only.
+- **Calendar hand-off** for an alert that must not be missed: a Google
+  Calendar link and an .ics file with an alarm, both built in `reminders.ts`.
+- **Old Notion databases** have no `Reminder` property. Reads treat it as
+  absent; writes never mention it unless a reminder is involved. The first time
+  one is set, Notion refuses, the app checks the schema, adds the property and
+  sends again; if it cannot (or a `Reminder` of another type exists) the error
+  says to add the property by hand.
+
+*Categories.* The request was that the app go through the current categories
+before filing, and create one only when none fits. With Gemini on that was
+already the behaviour (2026-11-08). What changed:
+
+- **With AI off, or when Gemini fails**, the rules now check the user's own
+  categories first: a task whose text names one ("car" → Car, "הרכב" → רכב,
+  plain plurals) is filed there, ahead of the built-in keyword lists. Built-in
+  names are not matched this way — "home" and "work" are everyday words.
+- **Nothing fits and no AI**: keyword rules cannot invent a sensible name, so
+  the task goes to Inbox and the capture note offers "Pick or create a
+  category", which opens the sheet for that task.
+- **Gemini is shown what each of the user's categories holds** — up to three
+  task titles each — and told to go through them one by one.
+- The live preview knows the user's categories too.
+
+`CategoryPicker`'s dialog logic moved into `Sheet.tsx`, shared with the
+reminder sheet.
+
+Verified: 274 unit tests, in four time zones; the built app in a phone-sized
+Chromium — phone-only (set, move, remove, come due with a real notification,
+reload, Later / Got it, calendar links, the category flows, back gesture and
+focus) and Notion with the API intercepted (a database with and without the
+property, and one that refuses the schema change).
+
+**Not verified:** a real phone (Android's background timer throttling decides
+how punctual a background notification is; iOS only notifies an app on the
+Home Screen); the real Notion API's refusal of an unknown property and its
+acceptance of the schema update (intercepted here, `api.notion.com` being
+unreachable from this environment); what the real Gemini does with the
+examples.
+
+Not built: reminders from the capture text ("remind me at 5"), recurring
+reminders, snooze from the notification itself.
 
 **2026-11-08 — Bug-hunt chunk 3: the remaining findings.**
 

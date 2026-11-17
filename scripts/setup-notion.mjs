@@ -72,6 +72,7 @@ try {
         Tags: { multi_select: { options: [] } },
         Note: { rich_text: {} },
         Completed: { date: {} },
+        Reminder: { date: {} },
       },
     },
   });

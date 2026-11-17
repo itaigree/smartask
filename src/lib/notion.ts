@@ -5,10 +5,11 @@ import { Client } from '@notionhq/client';
 import type { NotionConfig } from './config.ts';
 
 export {
-  PROPS, SCHEMA, pageToTask, newTaskToProperties, patchToProperties, listFilter,
+  PROPS, SCHEMA, OPTIONAL_SCHEMA, pageToTask, newTaskToProperties, patchToProperties, listFilter,
 } from './notion-mapping.ts';
 export {
-  describeNotionError, mayHaveSaved, notionErrorCode, TaskGoneError, UnconfirmedSaveError,
+  describeNotionError, mayHaveSaved, notionErrorCode, ReminderSetupError, TaskGoneError,
+  UnconfirmedSaveError,
 } from './notion-errors.ts';
 
 /**

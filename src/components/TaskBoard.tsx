@@ -8,7 +8,13 @@ import { describeNotionError, UnconfirmedSaveError } from '../lib/notion.ts';
 import { rulesCanRead, type CategorySignal, type RuleInput } from '../lib/categorize/index.ts';
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
 import { categoryList, learnCategories } from '../lib/categories.ts';
+import {
+  loadAnnounced, nextReminderAt, reminderLabel, reminderTime, rememberAnnounced, ringingTasks,
+  saveAnnounced, unannounced,
+} from '../lib/reminders.ts';
+import { showReminder } from '../lib/notify.ts';
 import CategoryPicker from './CategoryPicker.tsx';
+import ReminderPicker from './ReminderPicker.tsx';
 import { createThrottle } from '../lib/throttle.ts';
 import type { TaskRepository } from '../lib/tasks.ts';
 import type { Task, TaskPatch } from '../lib/types.ts';
@@ -39,6 +45,17 @@ const SETTLE_MS = 2_000;
  */
 const SHIFT_GUARD_MS = 400;
 
+/**
+ * A reminder that came due this recently is announced with a notification even
+ * while the app is on screen: it is happening now. An older one — found on
+ * opening the app — is only shown in the banner; buzzing the phone for
+ * something already in front of its owner helps nobody.
+ */
+const JUST_DUE_MS = 90_000;
+
+/** The longest wait a browser timer can hold (about 24 days). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 /** See `graceMs` below: how far Notion's query may lag behind a confirmed write. */
 const NOTION_READ_GRACE_MS = 5_000;
 
@@ -56,6 +73,7 @@ export default function TaskBoard({
   onOpenAi,
   customCategories,
   onCustomCategoriesChange,
+  onTasksChange,
 }: {
   repo: TaskRepository;
   /** Where tasks live; changes wording, and whether there is anything to re-read. */
@@ -69,6 +87,8 @@ export default function TaskBoard({
   /** Categories the user created, beyond the built-ins. */
   customCategories: string[];
   onCustomCategoriesChange: (next: string[]) => void;
+  /** Told the task list whenever it changes, for what Gemini is shown of each category. */
+  onTasksChange?: (tasks: readonly Task[]) => void;
 }) {
   const isLocal = storage.kind === 'local';
 
@@ -101,6 +121,8 @@ export default function TaskBoard({
    * sheet must show and save against the task as it is now.
    */
   const [editingId, setEditingId] = useState<string | null>(null);
+  /** The id of the task whose reminder sheet is open — the id, for the same reason. */
+  const [remindingId, setRemindingId] = useState<string | null>(null);
   const [sortNote, setSortNote] = useState<string | null>(null);
   /**
    * Tasks just ticked (or reopened), kept where they were for a moment instead
@@ -388,11 +410,18 @@ export default function TaskBoard({
     if (learned) onCustomCategoriesChange(learned);
   }, [tasks, customCategories, onCustomCategoriesChange]);
 
+  useEffect(() => {
+    if (tasks) onTasksChange?.(tasks);
+  }, [tasks, onTasksChange]);
+
   const editing = editingId ? byId.get(editingId) ?? null : null;
 
   const changeCategory = useCallback(
     async (id: string, category: string) => {
       setEditingId(null);
+      // The note under the box says where the last capture was filed; once the
+      // user files it themselves, that is no longer true.
+      setLastCapture((current) => (current?.task.id === id ? null : current));
       const live = tasksRef.current?.find((t) => t.id === id);
       if (!live || category === live.category) return;
 
@@ -409,6 +438,56 @@ export default function TaskBoard({
     },
     [allCategories, customCategories, onCustomCategoriesChange, writeOp],
   );
+
+  const reminding = remindingId ? byId.get(remindingId) ?? null : null;
+
+  /** Set, move or (with null) remove one task's reminder. */
+  const changeReminder = useCallback(
+    async (id: string, reminder: string | null) => {
+      setRemindingId(null);
+      const live = tasksRef.current?.find((t) => t.id === id);
+      if (!live || reminder === live.reminder) return;
+      const failure = reminder
+        ? `Could not set the reminder for “${live.title}”`
+        : `Could not remove the reminder from “${live.title}”`;
+      try {
+        await writeOp(live, { reminder }, failure);
+      } catch {
+        // writeOp put the task back and said why.
+      }
+    },
+    [writeOp],
+  );
+
+  /** Reminders whose time has come, waiting for an answer. */
+  const ringing = useMemo(() => (tasks && now ? ringingTasks(tasks, now) : []), [tasks, now]);
+
+  // Wake the board the moment the next reminder comes due, rather than at the
+  // next minute tick.
+  useEffect(() => {
+    if (!tasks) return;
+    const next = nextReminderAt(tasks, new Date());
+    if (next === null) return;
+    const timer = setTimeout(
+      () => setNow(new Date()),
+      Math.min(Math.max(next - Date.now(), 0) + 250, MAX_TIMER_MS),
+    );
+    return () => clearTimeout(timer);
+  }, [tasks, now]);
+
+  // Notify about each ringing reminder once per device (see reminders.ts).
+  useEffect(() => {
+    if (!tasks || ringing.length === 0) return;
+    const announced = loadAnnounced();
+    const fresh = unannounced(ringing, announced);
+    if (fresh.length === 0) return;
+    saveAnnounced(rememberAnnounced(announced, fresh, tasks));
+    const onScreen = document.visibilityState === 'visible';
+    for (const task of fresh) {
+      const justDue = Date.now() - (reminderTime(task) ?? 0) < JUST_DUE_MS;
+      if (!onScreen || justDue) void showReminder(task);
+    }
+  }, [ringing, tasks]);
 
   const removeCategory = useCallback(
     (name: string) => onCustomCategoriesChange(customCategories.filter((c) => c !== name)),
@@ -497,7 +576,11 @@ export default function TaskBoard({
     allow(); // the initial load counts as the first read
 
     const onReturn = () => {
-      if (document.visibilityState !== 'visible' || busyRef.current) return;
+      if (document.visibilityState !== 'visible') return;
+      // A phone freezes the timers of an app it put away, so a reminder may
+      // have come due meanwhile: look at the clock at once, whatever else waits.
+      setNow(new Date());
+      if (busyRef.current) return;
       if (!allow()) return;
       void refreshRef.current();
     };
@@ -594,7 +677,46 @@ export default function TaskBoard({
         )}
       </header>
 
-      <QuickAdd onCreate={create} busy={creating} aiEnabled={aiEnabled} />
+      {ringing.length > 0 && now && (
+        <section className="reminders-due" aria-label="Reminders">
+          {ringing.map((task) => (
+            <div className="reminder-due" key={task.id} role="status">
+              <span className="reminder-due-text">
+                <span aria-hidden="true">🔔</span>{' '}
+                <strong dir="auto">{task.title}</strong>
+                <span className="reminder-due-when">
+                  {task.reminder ? reminderLabel(task.reminder, now) : ''}
+                </span>
+              </span>
+              <span className="reminder-due-actions">
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setRemindingId(task.id)}
+                  aria-label={`Remind me later about ${task.title}`}
+                >
+                  Later
+                </button>
+                <button
+                  type="button"
+                  className="icon-button on"
+                  onClick={() => void changeReminder(task.id, null)}
+                  aria-label={`Got it: stop reminding about ${task.title}`}
+                >
+                  Got it
+                </button>
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <QuickAdd
+        onCreate={create}
+        busy={creating}
+        aiEnabled={aiEnabled}
+        categories={allCategories}
+      />
 
       {lastCapture && (
         <CaptureNote
@@ -603,6 +725,12 @@ export default function TaskBoard({
           signal={lastCapture.signal}
           aiEnabled={aiEnabled}
           onOpenAi={onOpenAi}
+          // Nothing fitted and it is still in Inbox: offer to file it by hand.
+          onChoose={
+            byId.get(lastCapture.task.id)?.category === 'Inbox'
+              ? () => setEditingId(lastCapture.task.id)
+              : undefined
+          }
           onDismiss={() => setLastCapture(null)}
         />
       )}
@@ -681,6 +809,7 @@ export default function TaskBoard({
                     now={now}
                     localOnly={isLocal}
                     onEditCategory={(t) => setEditingId(t.id)}
+                    onEditReminder={(t) => setRemindingId(t.id)}
                     onToggle={toggle}
                     onDelete={remove}
                   />
@@ -701,6 +830,15 @@ export default function TaskBoard({
           onClose={() => setEditingId(null)}
         />
       )}
+
+      {reminding && now && (
+        <ReminderPicker
+          task={reminding}
+          now={now}
+          onPick={(reminder) => void changeReminder(reminding.id, reminder)}
+          onClose={() => setRemindingId(null)}
+        />
+      )}
     </>
   );
 }
@@ -716,6 +854,7 @@ function CaptureNote({
   signal,
   aiEnabled,
   onOpenAi,
+  onChoose,
   onDismiss,
 }: {
   task: Task;
@@ -723,6 +862,8 @@ function CaptureNote({
   signal: CategorySignal;
   aiEnabled: boolean;
   onOpenAi: () => void;
+  /** Opens the category sheet for this task; given while it still sits in Inbox. */
+  onChoose?: () => void;
   onDismiss: () => void;
 }) {
   const title = task.title;
@@ -775,6 +916,13 @@ function CaptureNote({
         to sort tasks in any language.
       </>
     );
+  } else if (signal.category === 'Inbox') {
+    body = (
+      <>
+        None of your categories fitted <strong dir="auto">{title}</strong>, so it is in{' '}
+        <strong>Inbox</strong>.
+      </>
+    );
   } else {
     body = (
       <>
@@ -783,9 +931,20 @@ function CaptureNote({
     );
   }
 
+  // None of the categories fitted. With Gemini on it would have created one;
+  // here the user is asked, with the sheet that lists them all and makes new ones.
+  const choose = onChoose && (
+    <button type="button" className="link-button capture-action" onClick={onChoose}>
+      Pick or create a category
+    </button>
+  );
+
   return (
     <div className={`capture-note ${tone}`} role="status">
-      <span>{body}</span>
+      <span>
+        {body}
+        {choose}
+      </span>
       <button type="button" className="ghost-button" onClick={onDismiss} aria-label="Dismiss">
         ✕
       </button>

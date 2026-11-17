@@ -53,11 +53,14 @@ export default function QuickAdd({
   onCreate,
   busy,
   aiEnabled = false,
+  categories,
 }: {
   onCreate: (text: string) => Promise<Task | null>;
   busy: boolean;
   /** With Gemini on, the preview category is the local guess, not the verdict. */
   aiEnabled?: boolean;
+  /** Every category the user has, so the preview knows their own ones too. */
+  categories?: readonly string[];
 }) {
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -112,12 +115,13 @@ export default function QuickAdd({
       note: parsed.note,
       project: parsed.project,
       tags: parsed.tags,
+      categories,
     });
     const daysAway = parsed.due
       ? daysUntilDue({ due: parsed.due, status: 'Todo' } as Task, now)
       : null;
     return { parsed, category, daysAway };
-  }, [text]);
+  }, [text, categories]);
 
   /**
    * The one way a task gets added, typed or spoken. On success the box is

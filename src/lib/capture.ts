@@ -64,6 +64,7 @@ export async function captureDraft(
     project: parsed.project,
     tags: parsed.tags,
     note: parsed.note,
+    reminder: null,
   };
 
   return { draft, signal };

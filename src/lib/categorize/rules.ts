@@ -1,5 +1,6 @@
 import {
-  BUILT_IN_CATEGORIES, categoryKey, type BuiltInCategory, type Category,
+  BUILT_IN_CATEGORIES, categoryKey, isBuiltInCategory, readCategoryName,
+  type BuiltInCategory, type Category,
 } from '../types.ts';
 import type { CategorySignal, Categorizer } from './index.ts';
 
@@ -82,6 +83,12 @@ export interface RuleInput {
    * The built-ins when absent.
    */
   categories?: readonly string[];
+  /**
+   * A few task titles already filed in each of the user's own categories,
+   * keyed by `categoryKey` — what the category holds, beyond its name. For
+   * classifiers that read by meaning; the keyword rules ignore it.
+   */
+  examples?: ReadonlyMap<string, readonly string[]>;
 }
 
 /** A tag cannot hold a space, so `side-project` and `side_project` both mean "Side Project". */
@@ -114,6 +121,55 @@ export function categoryNamedByTags(
   return null;
 }
 
+/** Letters a Hebrew word takes in front: "הרכב", "לרכב", "מהרכב", "שברכב". */
+const HEBREW_PREFIX = '[הבלמשוכ]{0,2}';
+
+/**
+ * How a category name may be spelled inside a task: the name itself, with a
+ * plain English plural added or dropped ("Car" for "cars", "Pets" for "pet").
+ */
+function nameForms(name: string): string[] {
+  const key = categoryKey(name);
+  const forms = new Set([key]);
+  if (/[a-z]$/.test(key)) {
+    if (!key.endsWith('s')) forms.add(`${key}s`);
+    else if (key.length > 3 && !key.endsWith('ss')) forms.add(key.slice(0, -1));
+  }
+  return [...forms];
+}
+
+/**
+ * The category of the user's own that the task text names, or null: "Car" for
+ * "take the car to the garage", "רכב" for "לקחת את הרכב למוסך".
+ *
+ * Only their own categories count. They made each one for a kind of task, so
+ * its name in a task is deliberate evidence; the built-ins are everyday words
+ * ("work out", "home page") and are matched by the keyword lists instead.
+ * The longest name wins, so "Car Insurance" is not read as "Car".
+ */
+export function categoryNamedInText(
+  text: string,
+  categories: readonly string[] = [],
+): Category | null {
+  const own = categories
+    .map(readCategoryName)
+    .filter((name): name is string => name !== null && !isBuiltInCategory(name))
+    .sort((a, b) => b.length - a.length);
+
+  const haystack = text.normalize('NFC');
+  for (const name of own) {
+    // A one-letter name would match far too much to mean anything.
+    if (categoryKey(name).replace(/[^\p{L}\p{N}]/gu, '').length < 2) continue;
+    const forms = nameForms(name)
+      .map((form) => form.split(/[\s\-_]+/).map(escapeRegExp).join('[\\s\\-_]+'))
+      .join('|');
+    const prefix = /^\p{Script=Hebrew}/u.test(name) ? HEBREW_PREFIX : '';
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${prefix}(?:${forms})(?![\\p{L}\\p{N}])`, 'iu');
+    if (re.test(haystack)) return name;
+  }
+  return null;
+}
+
 /**
  * Whether the keyword rules can read this text at all. Their word lists are
  * English, so a task with letters in another script (Hebrew, say) only ever
@@ -125,6 +181,10 @@ export function rulesCanRead(text: string): boolean {
 
 /**
  * Score every category against the text and return the winner.
+ *
+ * The user's own categories are gone through first, then the keyword lists
+ * for the built-in ones; a task nothing fits goes to Inbox, where the app
+ * offers to pick or create a category for it.
  *
  * Two tiers of explicit naming, because `#` and `@` mean different things:
  *
@@ -144,6 +204,14 @@ export function categorizeByRules(input: RuleInput): CategorySignal {
   const haystack = [input.title, input.note ?? '', ...(input.tags ?? [])]
     .join(' ')
     .toLowerCase();
+
+  // A category the user made, named in the task itself, is more specific than
+  // any built-in the keywords could reach: "renew the car insurance" belongs
+  // in their Car, not in Finance.
+  const named = categoryNamedInText(haystack, input.categories);
+  if (named) {
+    return { category: named, confidence: 0.8, reason: 'mentions your category', source: 'rules' };
+  }
 
   let best: { category: BuiltInCategory; score: number; hits: string[] } | null = null;
 

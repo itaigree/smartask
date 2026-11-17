@@ -22,6 +22,7 @@ function task(overrides: Partial<Task> = {}): Task {
     project: null,
     tags: [],
     note: null,
+    reminder: null,
     createdAt: NOW.toISOString(),
     completedAt: null,
     url: null,

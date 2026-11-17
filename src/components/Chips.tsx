@@ -85,6 +85,39 @@ export function DueChip({ due, daysAway }: { due: string; daysAway: number | nul
   return <span className={`chip due ${tone}`}>{dueLabel(due, daysAway)}</span>;
 }
 
+/**
+ * A task's reminder, and the way to change it. `ringing` marks one whose time
+ * has come and that nobody has answered yet.
+ */
+export function ReminderChip({
+  label,
+  ringing,
+  onClick,
+}: {
+  label: string;
+  ringing: boolean;
+  onClick?: () => void;
+}) {
+  const className = `chip reminder${ringing ? ' ringing' : ''}`;
+  if (!onClick) {
+    return (
+      <span className={className}>
+        <span aria-hidden="true">🔔</span> {label}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={`${className} editable reminder-control`}
+      onClick={onClick}
+      aria-label={`Reminder: ${label}. Tap to change.`}
+    >
+      <span aria-hidden="true">🔔</span> {label}
+    </button>
+  );
+}
+
 export function ProjectChip({ project }: { project: string }) {
   return (
     <span className="chip project" dir="auto">
