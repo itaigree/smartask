@@ -229,3 +229,31 @@ test('R1-40: a browser that keeps data passes the storage check, and the probe i
     delete g.window;
   }
 });
+
+test('a reminder is stored with its task, survives a reload and a backup, and can be removed', async () => {
+  const store = memoryStore();
+  const repo = createLocalRepository(undefined, store);
+  const { task } = await repo.captureTask('call the bank');
+  assert.equal(task.reminder, null, 'a new task has no reminder');
+
+  const at = '2026-11-18T07:00:00.000Z';
+  assert.equal((await repo.updateTask(task.id, { reminder: at })).reminder, at);
+  assert.equal((await createLocalRepository(undefined, store).listTasks())[0].reminder, at);
+
+  const restored = memoryStore();
+  importBackup(exportBackup(store), restored);
+  assert.equal((await createLocalRepository(undefined, restored).listTasks())[0].reminder, at);
+
+  assert.equal((await repo.updateTask(task.id, { reminder: null })).reminder, null);
+});
+
+test('a task saved before reminders existed, or with a damaged one, simply has none', () => {
+  const base = { id: 'a', title: 'old task' };
+  assert.equal(sanitizeStoredTask(base)?.reminder, null);
+  assert.equal(sanitizeStoredTask({ ...base, reminder: 'soon' })?.reminder, null);
+  assert.equal(sanitizeStoredTask({ ...base, reminder: 42 })?.reminder, null);
+  assert.equal(
+    sanitizeStoredTask({ ...base, reminder: '2026-11-18T09:00:00+02:00' })?.reminder,
+    '2026-11-18T07:00:00.000Z',
+  );
+});

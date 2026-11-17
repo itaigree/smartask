@@ -49,6 +49,13 @@ export interface Task {
   project: string | null;
   tags: string[];
   note: string | null;
+  /**
+   * When to remind about the task: an instant, as an ISO datetime in UTC
+   * (`2026-11-18T07:00:00.000Z`), or null. Kept until the user dismisses or
+   * moves it, or completes the task — so one that came due while the app was
+   * closed is still waiting when it opens.
+   */
+  reminder: string | null;
   /** ISO datetime. */
   createdAt: string;
   completedAt: string | null;
@@ -60,7 +67,10 @@ export type NewTask = Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'url'>;
 
 /** The subset of a task the UI is allowed to change. */
 export type TaskPatch = Partial<
-  Pick<Task, 'title' | 'category' | 'priority' | 'status' | 'due' | 'project' | 'tags' | 'note'>
+  Pick<
+    Task,
+    'title' | 'category' | 'priority' | 'status' | 'due' | 'project' | 'tags' | 'note' | 'reminder'
+  >
 >;
 
 export function isBuiltInCategory(value: unknown): value is BuiltInCategory {

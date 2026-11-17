@@ -10,7 +10,7 @@ import type { Task } from '../src/lib/types.ts';
 let seq = 0;
 const task = (o: Partial<Task> = {}): Task => ({
   id: `t${++seq}`, title: `task ${seq}`, category: 'Inbox', priority: 'Normal', status: 'Todo',
-  due: null, project: null, tags: [], note: null,
+  due: null, project: null, tags: [], note: null, reminder: null,
   createdAt: '2026-11-06T06:00:00Z', completedAt: null, url: null, ...o,
 });
 const T0 = 1_000_000;

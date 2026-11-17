@@ -18,6 +18,7 @@ test('capture turns one line of text into a complete task draft', async () => {
     project: 'home',
     tags: ['bills'],
     note: null,
+    reminder: null,
   });
 });
 

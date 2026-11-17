@@ -4,6 +4,7 @@ import {
   type NewTask, type Task, type TaskPatch,
 } from './types.ts';
 import { addDays, localDateOf, toISODate } from './parse.ts';
+import { readReminder } from './reminders.ts';
 
 /**
  * The Notion page <-> Task mapping, with no SDK import, so it stays pure and
@@ -21,6 +22,7 @@ export const PROPS = {
   tags: 'Tags',
   note: 'Note',
   completedAt: 'Completed',
+  reminder: 'Reminder',
 } as const;
 
 /** The schema `databases.create` is given, and what the app expects to find. */
@@ -34,6 +36,16 @@ export const SCHEMA = {
   [PROPS.tags]: { multi_select: { options: [] } },
   [PROPS.note]: { rich_text: {} },
   [PROPS.completedAt]: { date: {} },
+} as const;
+
+/**
+ * Properties the app uses when they are there and works without when they are
+ * not, so a database made before the feature existed keeps working untouched.
+ * `Reminder` is added to such a database the first time a reminder is set
+ * (see tasks.ts); a new database gets it from the setup script.
+ */
+export const OPTIONAL_SCHEMA = {
+  [PROPS.reminder]: { date: {} },
 } as const;
 
 /* ------------------------------------------------------------------ *
@@ -80,6 +92,14 @@ function readDate(props: Props, name: string): string | null {
   const date = p?.date;
   if (!date || typeof date !== 'object') return null;
   return localDateOf((date as { start?: string }).start);
+}
+
+/** A date property as an exact moment — the reminder — rather than a day. */
+function readMoment(props: Props, name: string): string | null {
+  const p = prop(props, name);
+  const date = p?.date;
+  if (!date || typeof date !== 'object') return null;
+  return readReminder((date as { start?: string }).start);
 }
 
 function readMultiSelect(props: Props, name: string): string[] {
@@ -129,6 +149,8 @@ export function pageToTask(page: unknown): Task | null {
     project: readRichText(props, PROPS.project),
     tags: readMultiSelect(props, PROPS.tags),
     note: readRichText(props, PROPS.note),
+    // Absent from a database made before reminders existed: then simply none.
+    reminder: readMoment(props, PROPS.reminder),
     createdAt: p.created_time ?? new Date().toISOString(),
     // Only the app stamps Completed. A task set to Done in Notion itself has
     // none, and would sit in "Done, last 14 days" forever; its last edit is
@@ -197,6 +219,9 @@ export function newTaskToProperties(task: NewTask): Record<string, unknown> {
     [PROPS.project]: { rich_text: task.project ? richText(task.project) : [] },
     [PROPS.tags]: { multi_select: task.tags.map((name) => ({ name })) },
     [PROPS.note]: { rich_text: task.note ? richText(task.note) : [] },
+    // Only sent when set: Notion refuses a property the database does not have,
+    // and a database made before reminders existed has no Reminder yet.
+    ...(task.reminder ? { [PROPS.reminder]: { date: { start: task.reminder } } } : {}),
   };
 }
 
@@ -219,6 +244,9 @@ export function patchToProperties(patch: TaskPatch): Record<string, unknown> {
   }
   if (patch.note !== undefined) {
     out[PROPS.note] = { rich_text: patch.note ? richText(patch.note) : [] };
+  }
+  if (patch.reminder !== undefined) {
+    out[PROPS.reminder] = { date: patch.reminder ? { start: patch.reminder } : null };
   }
   if (patch.status !== undefined) {
     out[PROPS.status] = { select: { name: patch.status } };

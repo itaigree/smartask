@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  categoryList, learnCategories, isCustomCategory, categoryHue, loadCustomCategories,
+  categoryExamples, categoryList, learnCategories, isCustomCategory, categoryHue,
+  loadCustomCategories,
 } from '../src/lib/categories.ts';
 import {
   categoryKey, normalizeCategoryName, readCategoryName, sameCategory, type Task,
@@ -15,7 +16,7 @@ import {
 let seq = 0;
 const task = (category: string, o: Partial<Task> = {}): Task => ({
   id: `t${++seq}`, title: `task ${seq}`, category, priority: 'Normal', status: 'Todo',
-  due: null, project: null, tags: [], note: null,
+  due: null, project: null, tags: [], note: null, reminder: null,
   createdAt: '2026-11-06T06:00:00Z', completedAt: null, url: null, ...o,
 });
 
@@ -185,4 +186,24 @@ test('R2-1: a task kept on the phone reads its category by the same rule as Noti
   assert.equal(read('research '), 'research');
   assert.equal(read('WORK'), 'Work');
   assert.equal(read(` ${ZWSP} `), 'Inbox', 'nothing visible is no category');
+});
+
+test('each of the user\'s own categories is shown to Gemini with a few of its tasks', () => {
+  const examples = categoryExamples([
+    task('Pets', { title: 'feed the cat' }),
+    task('Work', { title: 'send the report' }),
+    task('pets', { title: 'vet   appointment' }),
+    task('Pets', { title: 'feed the cat' }),
+    task('Pets', { title: 'x'.repeat(100) }),
+    task('Pets', { title: 'a fourth one' }),
+    task('מחקר', { title: 'להגיש טופס' }),
+  ]);
+
+  // Keyed the way categories are compared, so "pets" and "Pets" are one.
+  assert.deepEqual([...examples.keys()].sort(), ['pets', 'מחקר'].sort());
+  const pets = examples.get('pets')!;
+  assert.equal(pets.length, 3, 'three stand for the category; a repeat is not counted twice');
+  assert.deepEqual(pets.slice(0, 2), ['feed the cat', 'vet appointment']);
+  assert.equal(pets[2].length, 60, 'a long title is cut short');
+  assert.equal(examples.has('work'), false, 'built-ins are described in the prompt already');
 });

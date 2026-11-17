@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pageToTask, newTaskToProperties, patchToProperties, PROPS, SCHEMA, listFilter, doneSince,
+  pageToTask, newTaskToProperties, patchToProperties, PROPS, SCHEMA, OPTIONAL_SCHEMA,
+  listFilter, doneSince,
 } from '../src/lib/notion-mapping.ts';
 import { addDays, toISODate } from '../src/lib/parse.ts';
 import { buildView } from '../src/lib/views.ts';
@@ -42,6 +43,7 @@ test('a complete Notion page maps to a complete Task', () => {
     project: 'home',
     tags: ['bills', 'monthly'],
     note: 'standing order',
+    reminder: null,
     createdAt: '2026-11-01T10:00:00.000Z',
     completedAt: null,
     url: 'https://notion.so/page-1',
@@ -81,6 +83,7 @@ test('a new task becomes a valid property payload', () => {
     project: null,
     tags: ['shop'],
     note: null,
+    reminder: null,
   };
   const props = newTaskToProperties(draft) as Record<string, any>;
   assert.equal(props[PROPS.title].title[0].text.content, 'Buy milk');
@@ -281,4 +284,44 @@ test('R1-25: the list never leaves out a Done task the Done view would show', ()
     if (tz === undefined) delete process.env.TZ;
     else process.env.TZ = tz;
   }
+});
+
+/* ---------------- reminders ---------------- */
+
+test('a reminder is read from Notion as an exact moment, whatever offset Notion writes it in', () => {
+  const at = (start: string | null) =>
+    pageToTask(page({ [PROPS.reminder]: { date: start ? { start } : null } }))?.reminder;
+  assert.equal(at('2026-11-18T09:00:00.000+02:00'), '2026-11-18T07:00:00.000Z');
+  assert.equal(at('2026-11-18T07:00:00.000Z'), '2026-11-18T07:00:00.000Z');
+  assert.equal(at(null), null);
+  // "Include time" off in Notion: the morning of that day, here.
+  assert.equal(at('2026-11-18'), new Date(2026, 10, 18, 9).toISOString());
+});
+
+test('a database made before reminders existed still reads and still takes new tasks', () => {
+  // No Reminder property on the page at all.
+  assert.equal(pageToTask(full)?.reminder, null);
+
+  // And a task with no reminder never mentions the property, which Notion
+  // would refuse on a database that does not have it.
+  const draft: NewTask = {
+    title: 'Buy milk', category: 'Errands', priority: 'Normal', status: 'Todo',
+    due: null, project: null, tags: [], note: null, reminder: null,
+  };
+  assert.equal(PROPS.reminder in newTaskToProperties(draft), false);
+  assert.equal(PROPS.reminder in SCHEMA, false, 'the checker must not demand it of old databases');
+  assert.deepEqual(OPTIONAL_SCHEMA[PROPS.reminder], { date: {} });
+
+  const withReminder = newTaskToProperties({ ...draft, reminder: '2026-11-18T07:00:00.000Z' });
+  assert.deepEqual(withReminder[PROPS.reminder], { date: { start: '2026-11-18T07:00:00.000Z' } });
+});
+
+test('setting and removing a reminder touch only the Reminder property', () => {
+  assert.deepEqual(patchToProperties({ reminder: '2026-11-18T07:00:00.000Z' }), {
+    [PROPS.reminder]: { date: { start: '2026-11-18T07:00:00.000Z' } },
+  });
+  assert.deepEqual(patchToProperties({ reminder: null }), { [PROPS.reminder]: { date: null } });
+  // Any other change leaves it out, so old databases keep saving.
+  assert.equal(PROPS.reminder in patchToProperties({ status: 'Done' }), false);
+  assert.equal(PROPS.reminder in patchToProperties({ category: 'Work' }), false);
 });

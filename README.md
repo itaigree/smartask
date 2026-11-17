@@ -57,8 +57,12 @@ Whatever is left becomes the title, with the matched phrases removed — so
 overdraft* and due tomorrow. Before you add it, a line under the box shows what
 will be saved.
 
-With AI off, the category comes from English keywords in the task. Two rules
-decide it:
+With AI off, the app first goes through the categories you created: a task
+that names one — "take the car to the garage" when you have a **Car** category,
+`לקחת את הרכב למוסך` when you have **רכב** — is filed there. Otherwise the
+category comes from English keywords in the task. If nothing fits, the task
+goes to Inbox and the line under the box offers **Pick or create a category**.
+(With AI on, Gemini creates the category itself — see below.) Two more rules:
 
 - A **tag** that names a category — a built-in or one you created — wins
   outright, with AI on or off. `@work` and `@research` are deliberate
@@ -166,6 +170,36 @@ that no task uses any more can be removed with its ✕; the built-in ones cannot
 Names can be up to 40 characters, in any language, but cannot contain a comma —
 Notion does not allow commas in its options.
 
+## Reminders
+
+Every open task has a 🔔. Tap it and choose **In 1 hour**, **This evening**,
+**Tomorrow morning** — or, for a task with a due date, the evening before or
+the morning it is due — or set any date and time. The task then shows the
+reminder as a chip; tap the chip to move it, remove it, or add it to your
+calendar.
+
+When the time comes, the task appears at the top of the app with **Later**
+(choose a new time) and **Got it** (done reminding). It stays there until you
+answer it, so a reminder is never lost — and completing the task answers it too.
+
+**What to expect from the notification.** The app has no server, and only a
+server can wake a closed app. So:
+
+- While the app is **open, or in the background**, your phone shows a
+  notification at the reminder's time. The first time you set a reminder the
+  browser asks for permission. On an iPhone this needs the app added to the
+  Home Screen.
+- If the app was **fully closed**, there is no notification; the reminder is
+  waiting at the top the next time you open it.
+- For an alert you cannot miss, tap the reminder chip and use **Google
+  Calendar ↗** or the **calendar file** — your phone's calendar then alerts
+  you whether or not SmartTask is running.
+
+Reminders are saved with the task: in Notion as a `Reminder` date property
+(added to your database automatically the first time you set one — you can
+also edit it there), and in the backup file in phone-only mode. Each device
+does its own notifying.
+
 ## AI classification (optional)
 
 Out of the box, categories come from keyword rules in
@@ -190,9 +224,11 @@ those and costs nothing.
   the gap. Gemini's title is used only if it is your text with one short run of
   words — the date — cut out, and never a "not"; otherwise your own wording is
   kept and only the date is taken.
-- **Your categories first, a new one only when nothing fits.** Gemini sees
-  every category you have — the built-ins and your own — and files the task
-  into the best fit, even a broader one. Only when none of them fits does it
+- **Your categories first, a new one only when nothing fits.** Before filing a
+  task, Gemini goes through every category you have — the built-ins and your
+  own, each of yours with a few of the tasks already in it, so it knows what
+  the category is for — and files the task into the best fit, even a broader
+  one. Only when none of them fits does it
   create a new, short, general category ("Pets", "Car", "Wedding"); the line
   under the box says so, and the new category is then offered for every later
   task. A near-twin of an existing one ("Cars" next to "Car") is never created.
@@ -307,6 +343,8 @@ src/
     QuickAdd.tsx        the capture box: live preview, voice, restored text
     AiSettings.tsx      Gemini key and model
     CategoryPicker.tsx  the sheet for moving a task or creating a category
+    ReminderPicker.tsx  the sheet for setting, moving or removing a reminder
+    Sheet.tsx           the bottom sheet both of those open in
     LocalBackup.tsx     back up and restore, phone-only mode
     TaskCard.tsx  ViewTabs.tsx  Chips.tsx  VoiceButton.tsx
   lib/
@@ -317,6 +355,8 @@ src/
     views.ts            focus scoring and grouping              (pure, tested)
     board-sync.ts       merges reads with saves still running   (pure, tested)
     recategorize.ts     Sort with Gemini                        (tested)
+    reminders.ts        reminder times, labels, calendar hand-off (pure, tested)
+    notify.ts           notification permission and display
     voice-session.ts    timing of one voice capture             (tested)
     speech.ts           browser speech recognition helpers      (tested)
     notion-mapping.ts   Notion page <-> Task                    (pure, tested)
@@ -355,6 +395,7 @@ types must match — the app reads properties by name.
 | `Tags` | Multi-select | |
 | `Note` | Text | |
 | `Completed` | Date | Stamped when a task is ticked done |
+| `Reminder` | Date | Optional. With a time. The app adds it to an older database the first time a reminder is set |
 
 `Status` is the one to watch: Notion's native *Status* property looks almost
 identical in the editor but is a different type over the API, and the app will
@@ -401,7 +442,8 @@ with no page access looks exactly like a wrong id.
   Notion's own view not redrawing: pull down to refresh on a phone, or reload.
 - **Phone-only, two windows.** The installed app and a browser tab on the same
   phone share the same tasks, and each picks up the other's changes.
-- **Not in v1:** recurring tasks, reminders, multiple users.
+- **Not built:** recurring tasks, multiple users, and reminders typed into the
+  capture box ("remind me at 5") — a reminder is set from the task's 🔔.
 - **Switching storage never deletes anything.** The ⏻ button returns you to the
   choice screen. Phone-only tasks stay on the device and come back if you pick
   phone-only again; they are not copied into Notion.

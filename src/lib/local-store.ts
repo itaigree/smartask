@@ -1,6 +1,7 @@
 import { captureDraft, ValidationError } from './capture.ts';
 import { getCategorizer, type Categorizer } from './categorize/index.ts';
 import { localDateOf, toISODate } from './parse.ts';
+import { readReminder } from './reminders.ts';
 import type { CaptureResult, TaskRepository } from './tasks.ts';
 import {
   readCategoryName, isPriority, isStatus,
@@ -86,6 +87,8 @@ export function sanitizeStoredTask(raw: unknown): Task | null {
     project: typeof t.project === 'string' && t.project ? t.project : null,
     tags: Array.isArray(t.tags) ? t.tags.filter((x): x is string => typeof x === 'string') : [],
     note: typeof t.note === 'string' && t.note ? t.note : null,
+    // Absent from tasks and backups saved before reminders existed.
+    reminder: readReminder(t.reminder),
     createdAt: typeof t.createdAt === 'string' ? t.createdAt : new Date(0).toISOString(),
     completedAt: date(t.completedAt),
     url: null, // there is no page to open for a local task

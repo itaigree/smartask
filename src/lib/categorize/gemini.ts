@@ -72,12 +72,18 @@ export function calendarLines(now: Date): string[] {
   });
 }
 
-/** How a category is described to the model. Custom ones have no guide — just their name. */
-function describeCategory(name: string): string {
+/**
+ * How a category is described to the model. A built-in has its guide. One of
+ * the user's own has only its name — and, when there are any, a few tasks
+ * already filed in it, which say what it is for better than the name does.
+ */
+function describeCategory(name: string, examples: readonly string[] = []): string {
   const guide = (CATEGORY_GUIDE as Record<string, string>)[name];
-  return guide
-    ? `- ${name}: ${guide}`
-    : `- ${name}: the user's own category — use it whenever the task clearly fits it`;
+  if (guide) return `- ${name}: ${guide}`;
+  const own = `- ${name}: the user's own category — use it whenever the task clearly fits it`;
+  return examples.length
+    ? `${own}. Tasks already in it: ${examples.map((t) => JSON.stringify(t)).join(', ')}`
+    : own;
 }
 
 /**
@@ -115,16 +121,18 @@ export function buildPrompt(
     'list below; built-in categories always get their English category name.',
     '',
     "The user's current categories:",
-    ...offered(categories).map(describeCategory),
+    ...offered(categories).map((name) =>
+      describeCategory(name, input.examples?.get(categoryKey(name)))),
     '',
   ];
 
   if (allowNew) {
     lines.push(
       'Decide in two steps:',
-      "1. Go through the user's current categories above and pick the one that fits the",
-      '   task best. Prefer an existing category whenever it fits reasonably well, even',
-      '   if it is broader than the task.',
+      "1. Go through every one of the user's current categories above, one by one, and",
+      '   pick the one that fits the task best. Where a category lists tasks already in',
+      '   it, a task of the same kind belongs there too. Prefer an existing category',
+      '   whenever it fits reasonably well, even if it is broader than the task.',
       '2. Only if none of them fits, create a new category: a short, general English',
       '   name of one or two words in Title Case (for example "Pets", "Car", "Wedding")',
       '   that later tasks of the same kind could also go into. Never create a category',

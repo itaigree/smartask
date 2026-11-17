@@ -14,7 +14,7 @@ import {
   loadEnv, normalizeId, describeFailure, tokenProblem, ok, bad, warn, info,
 } from './lib/env.mjs';
 // Importing a .ts file directly needs Node 22.18 or newer (package.json "engines").
-import { SCHEMA, PROPS } from '../src/lib/notion-mapping.ts';
+import { SCHEMA, OPTIONAL_SCHEMA, PROPS } from '../src/lib/notion-mapping.ts';
 
 loadEnv();
 
@@ -165,6 +165,17 @@ if (schemaProblems === 0) {
 } else {
   info('Rename the properties in Notion to match, or run `npm run setup:notion`');
   info('to create a fresh database and point NOTION_DATABASE_ID at that instead.');
+}
+
+// Optional properties: the app works without them and adds them when needed.
+for (const [name, definition] of Object.entries(OPTIONAL_SCHEMA)) {
+  const expectedType = Object.keys(definition)[0];
+  const found = actual[name];
+  if (!found) {
+    info(`No "${name}" property yet — the app adds it the first time you set a reminder.`);
+  } else if (found.type !== expectedType) {
+    warn(`Property "${name}" is type "${found.type}"; reminders need it to be "${expectedType}".`);
+  }
 }
 
 // Select options are not fatal — Notion creates a missing one on write — but a

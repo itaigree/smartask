@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  categorizeByRules, categoryNamedByTags, rulesCanRead,
+  categorizeByRules, categoryNamedByTags, categoryNamedInText, rulesCanRead,
 } from '../src/lib/categorize/rules.ts';
 import { getCategorizer, withCategories } from '../src/lib/categorize/index.ts';
 
@@ -108,4 +108,53 @@ test('getCategorizer returns the rules implementation by default', async () => {
   const c = getCategorizer();
   assert.equal(c.name, 'rules');
   assert.equal((await c.categorize({ title: 'pay rent' })).category, 'Finance');
+});
+
+/* ---- The user's own categories are gone through before the keyword lists ---- */
+
+test('a task that names one of the user\'s own categories is filed there', () => {
+  const categories = ['Work', 'Car', 'Pets', 'Side Project', 'Inbox'];
+  const file = (title: string) => categorizeByRules({ title, categories });
+
+  assert.equal(file('take the car to the garage').category, 'Car');
+  assert.equal(file('wash both cars').category, 'Car', 'a plain plural still names it');
+  assert.equal(file('find a pet sitter').category, 'Pets', 'and so does the singular');
+  assert.equal(file('ship the side-project landing page').category, 'Side Project');
+  assert.equal(file('Take the CAR in').category, 'Car', 'in any letter case');
+  assert.equal(file('take the car to the garage').reason, 'mentions your category');
+
+  // More specific than a built-in the keywords would have picked.
+  assert.equal(cat('renew the car insurance'), 'Finance');
+  assert.equal(file('renew the car insurance').category, 'Car');
+});
+
+test('only whole words name a category, and only the user\'s own ones', () => {
+  const categories = ['Car', 'Home', 'Work'];
+  const file = (title: string) => categorizeByRules({ title, categories }).category;
+
+  assert.equal(file('send the postcard'), 'Inbox', '"card" and "postcard" are not Car');
+  assert.equal(file('scare the crows'), 'Inbox');
+  // Built-in names are everyday words; the keyword lists decide those.
+  assert.equal(file('home page redesign'), 'Inbox');
+  assert.equal(file('work out a plan'), 'Inbox');
+  // With no categories of their own, nothing changes.
+  assert.equal(categorizeByRules({ title: 'take the car to the garage' }).category, 'Inbox');
+});
+
+test('a Hebrew category is found behind the letters Hebrew puts in front of a word', () => {
+  const categories = ['רכב', 'חתונה'];
+  assert.equal(categoryNamedInText('לקחת את הרכב למוסך', categories), 'רכב');
+  assert.equal(categoryNamedInText('ביטוח לרכב', categories), 'רכב');
+  assert.equal(categoryNamedInText('להזמין צלם לחתונה', categories), 'חתונה');
+  assert.equal(categoryNamedInText('לתקן את המרכבה', categories), null, 'a longer word is another word');
+  assert.equal(categoryNamedInText('לקנות חלב', categories), null);
+});
+
+test('the longest category named wins, and a tag still beats the text', () => {
+  const categories = ['Car', 'Car Insurance', 'Pets'];
+  assert.equal(categoryNamedInText('renew the car insurance', categories), 'Car Insurance');
+  assert.equal(
+    categorizeByRules({ title: 'take the car to the vet', tags: ['pets'], categories }).category,
+    'Pets',
+  );
 });

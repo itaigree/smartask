@@ -53,6 +53,31 @@ export function learnCategories(custom: readonly string[], tasks: readonly Task[
   return unchanged ? null : next;
 }
 
+/** How many titles stand for one category, and how much of each is kept. */
+const EXAMPLES_PER_CATEGORY = 3;
+const EXAMPLE_LENGTH = 60;
+
+/**
+ * A few task titles from each of the user's own categories, keyed by
+ * `categoryKey` — shown to Gemini so it can judge whether a new task belongs
+ * with what a category already holds, not only with its name. The first ones
+ * in the list are taken (the stores list newest first); built-in categories
+ * are described in the prompt already and get none.
+ */
+export function categoryExamples(tasks: readonly Task[]): Map<string, string[]> {
+  const examples = new Map<string, string[]>();
+  for (const task of tasks) {
+    if (!isCustomCategory(task.category)) continue;
+    const key = categoryKey(task.category);
+    const list = examples.get(key) ?? [];
+    const title = task.title.replace(/\s+/g, ' ').trim();
+    if (!title || list.length >= EXAMPLES_PER_CATEGORY || list.includes(title)) continue;
+    list.push(title.length > EXAMPLE_LENGTH ? `${title.slice(0, EXAMPLE_LENGTH - 1)}…` : title);
+    examples.set(key, list);
+  }
+  return examples;
+}
+
 export function isCustomCategory(name: string): boolean {
   const key = categoryKey(name);
   return !BUILT_IN_CATEGORIES.some((c) => categoryKey(c) === key);
