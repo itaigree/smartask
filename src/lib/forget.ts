@@ -1,5 +1,6 @@
 import { clearGeminiConfig, loadGeminiConfig } from './config.ts';
 import { loadCustomCategories, saveCustomCategories } from './categories.ts';
+import { ANNOUNCED_KEY } from './reminders.ts';
 
 /**
  * ⏻ is how someone cleans up a shared device. Leaving a store forgets only
@@ -50,6 +51,18 @@ export function forgetQuestion(left: LeftBehind, keptTasks = false): string | nu
 export function forgetPendingDraft(): void {
   try {
     window.localStorage.removeItem('smartask.pending.v1');
+  } catch {
+    // Storage blocked: there is nothing saved to forget.
+  }
+}
+
+/**
+ * Which reminders this device has notified about: a list of the leaving
+ * person's task ids. Nothing the next person, or the other store, should find.
+ */
+export function forgetReminderRecord(): void {
+  try {
+    window.localStorage.removeItem(ANNOUNCED_KEY);
   } catch {
     // Storage blocked: there is nothing saved to forget.
   }

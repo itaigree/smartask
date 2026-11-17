@@ -56,6 +56,17 @@ export function isRinging(task: Task, now: Date): boolean {
   return time !== null && task.status !== 'Done' && time <= now.getTime();
 }
 
+/**
+ * Completing a task answers its reminder. The reminder is left on the task
+ * while it is Done — a tick made by mistake and undone keeps it — but a task
+ * reopened later must not start ringing about a time long gone. True when
+ * reopening `task` at `now` should drop its reminder.
+ */
+export function answeredByCompleting(task: Pick<Task, 'reminder' | 'status'>, now: Date): boolean {
+  const time = reminderTime(task);
+  return task.status === 'Done' && time !== null && time <= now.getTime();
+}
+
 /** Every reminder waiting for an answer, the one that has waited longest first. */
 export function ringingTasks(tasks: readonly Task[], now: Date): Task[] {
   return tasks
@@ -177,7 +188,7 @@ export function fromLocalInput(value: string): Date | null {
  */
 export type Announced = Record<string, string>;
 
-const ANNOUNCED_KEY = 'smartask.reminders.announced.v1';
+export const ANNOUNCED_KEY = 'smartask.reminders.announced.v1';
 
 /** The ringing reminders this device has not notified about yet. */
 export function unannounced(ringing: readonly Task[], announced: Announced): Task[] {

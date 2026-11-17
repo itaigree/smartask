@@ -287,8 +287,9 @@ function dateMatchers(now: Date): Array<[RegExp, Builder]> {
       return wd === undefined ? null : addDays(now, daysUntilWeekday(now, wd) + 7);
     }],
 
-    // "friday" / "on friday" / "by friday" = next occurrence, today included.
-    [re(`${WS}(?:(?:on|by|due)\\s+)?(${WEEKDAY_NAMES})${WE}`), (m) => {
+    // "friday" / "on friday" / "by this friday" = next occurrence, today
+    // included. "this" leaves with the day: it was left dangling in the title.
+    [re(`${WS}(?:(?:on|by|due)\\s+)?(?:this\\s+(?:coming\\s+)?)?(${WEEKDAY_NAMES})${WE}`), (m) => {
       const wd = WEEKDAY_ALIASES[m[1]];
       return wd === undefined ? null : addDays(now, daysUntilWeekday(now, wd));
     }],

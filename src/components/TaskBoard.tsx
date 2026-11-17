@@ -9,7 +9,7 @@ import { rulesCanRead, type CategorySignal, type RuleInput } from '../lib/catego
 import { inboxTasks, sortInbox, type SortProgress } from '../lib/recategorize.ts';
 import { categoryList, learnCategories } from '../lib/categories.ts';
 import {
-  loadAnnounced, nextReminderAt, reminderLabel, reminderTime, rememberAnnounced, ringingTasks,
+  answeredByCompleting, loadAnnounced, nextReminderAt, reminderLabel, reminderTime, rememberAnnounced, ringingTasks,
   saveAnnounced, unannounced,
 } from '../lib/reminders.ts';
 import { showReminder } from '../lib/notify.ts';
@@ -366,8 +366,12 @@ export default function TaskBoard({
       });
       holdSettling();
       const verb = next === 'Done' ? 'complete' : 'reopen';
+      const patch: TaskPatch = { status: next };
+      // Completing answered the reminder, so a task reopened later does not
+      // ring about a time long gone. Undoing a tick just made keeps it.
+      if (!undo && answeredByCompleting(live, new Date())) patch.reminder = null;
       try {
-        await writeOp(live, { status: next }, `Could not ${verb} “${live.title}”`);
+        await writeOp(live, patch, `Could not ${verb} “${live.title}”`);
       } catch {
         // writeOp put the task back and said why.
       }
@@ -465,8 +469,11 @@ export default function TaskBoard({
   // Wake the board the moment the next reminder comes due, rather than at the
   // next minute tick.
   useEffect(() => {
-    if (!tasks) return;
-    const next = nextReminderAt(tasks, new Date());
+    if (!tasks || !now) return;
+    // Counted from the clock the board last looked at, not from this instant:
+    // a reminder that came due in between (one just read from Notion, say) is
+    // then due at once, instead of waiting for the next minute tick.
+    const next = nextReminderAt(tasks, now);
     if (next === null) return;
     const timer = setTimeout(
       () => setNow(new Date()),

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { forgetDeviceSettings, forgetQuestion, leftBehind } from '../src/lib/forget.ts';
+import {
+  forgetDeviceSettings, forgetQuestion, forgetReminderRecord, leftBehind,
+} from '../src/lib/forget.ts';
+import { ANNOUNCED_KEY } from '../src/lib/reminders.ts';
 import { loadGeminiConfig } from '../src/lib/config.ts';
 import { loadCustomCategories } from '../src/lib/categories.ts';
 import { readTasks, TASKS_KEY } from '../src/lib/local-store.ts';
@@ -67,4 +70,14 @@ test('R1-14: the question names only what is there, and says phone-only tasks st
 test('R1-14: with no browser storage there is nothing to forget, and no crash', () => {
   assert.deepEqual(leftBehind(), { geminiKey: false, customCategories: 0 });
   forgetDeviceSettings();
+});
+
+test('leaving forgets which reminders this device notified about, and nothing else', () => {
+  withDevice((data) => {
+    data.set(ANNOUNCED_KEY, JSON.stringify({ a: '2026-11-17T07:00:00.000Z' }));
+    forgetReminderRecord();
+    assert.equal(data.has(ANNOUNCED_KEY), false);
+    assert.equal(readTasks(window.localStorage).length, 1, 'tasks are never touched');
+  });
+  forgetReminderRecord(); // no browser storage: no crash
 });

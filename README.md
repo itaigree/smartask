@@ -40,8 +40,8 @@ third party.
 | `@tag` | Tag. `@urgent`, `@important`, `@someday`, `#asap` and the like also set the priority when nothing else did. |
 | anything after ` // ` | Note |
 
-`friday` is the coming Friday — today, if it is Friday. `next friday` is the one
-a week after that.
+`friday` (or `this friday`) is the coming Friday — today, if it is Friday.
+`next friday` is the one a week after that.
 
 The box is a single line, so a pasted line break becomes a space and does not
 start a note. Use ` // ` for that: `renew passport // last time it took 3 weeks`.
@@ -59,7 +59,9 @@ will be saved.
 
 With AI off, the app first goes through the categories you created: a task
 that names one — "take the car to the garage" when you have a **Car** category,
-`לקחת את הרכב למוסך` when you have **רכב** — is filed there. Otherwise the
+`לקחת את הרכב למוסך` when you have **רכב** — is filed there. (A category
+named with an everyday word only counts in capitals: with an **IT** category,
+"ask IT for a laptop" is filed there and "fix it now" is not.) Otherwise the
 category comes from English keywords in the task. If nothing fits, the task
 goes to Inbox and the line under the box offers **Pick or create a category**.
 (With AI on, Gemini creates the category itself — see below.) Two more rules:
@@ -180,7 +182,8 @@ calendar.
 
 When the time comes, the task appears at the top of the app with **Later**
 (choose a new time) and **Got it** (done reminding). It stays there until you
-answer it, so a reminder is never lost — and completing the task answers it too.
+answer it, so a reminder is never lost — and completing the task answers it
+too: reopen the task later and a reminder whose time has passed is gone.
 
 **What to expect from the notification.** The app has no server, and only a
 server can wake a closed app. So:

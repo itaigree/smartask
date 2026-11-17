@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  calendarFile, fromLocalInput, googleCalendarUrl, isRinging, nextReminderAt, readReminder,
+  answeredByCompleting, calendarFile, fromLocalInput, googleCalendarUrl, isRinging, nextReminderAt, readReminder,
   reminderLabel, reminderPresets, rememberAnnounced, ringingTasks, toLocalInput, unannounced,
 } from '../src/lib/reminders.ts';
 import type { Task } from '../src/lib/types.ts';
@@ -179,4 +179,16 @@ test('a long Hebrew title is folded at 75 bytes without splitting a letter', () 
   // Unfolding gives the title back whole.
   const unfolded = file.replace(/\r\n /g, '');
   assert.ok(unfolded.includes(`SUMMARY:${title}`));
+});
+
+test('completing a task answers its reminder: reopened later, it does not ring again', () => {
+  const past = at(17, 9).toISOString();
+  const ahead = at(17, 18).toISOString();
+  // Done, and the time came: reopening drops it rather than ringing about the past.
+  assert.equal(answeredByCompleting(task({ status: 'Done', reminder: past }), NOW), true);
+  // Still ahead: the reopened task keeps its reminder.
+  assert.equal(answeredByCompleting(task({ status: 'Done', reminder: ahead }), NOW), false);
+  // Completing itself changes nothing, so a tick undone at once keeps the reminder.
+  assert.equal(answeredByCompleting(task({ status: 'Todo', reminder: past }), NOW), false);
+  assert.equal(answeredByCompleting(task({ status: 'Done' }), NOW), false);
 });
